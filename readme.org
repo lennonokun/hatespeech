@@ -1,6 +1,13 @@
 * todo 
 
 - use reasonings
+- don't only consider majority label
 - augmentation with constraints to not modify reasonings
 - multiple datasets?
 - focal loss?
+- try reft instead of lora
+- check quantization
+- check how im combining post_tokens
+- augmentation training method?
+  - randomized vs total?
+  - if randomized, custom dataloader

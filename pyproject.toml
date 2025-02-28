@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "datasets>=3.3.2",
-    "evaluate>=0.4.3",
     "lightning[extra]>=2.5.0.post0",
     "matplotlib>=3.10.0",
     "numpy>=2.2.2",
