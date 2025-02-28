@@ -1,0 +1,6 @@
+* todo 
+
+- use reasonings
+- augmentation with constraints to not modify reasonings
+- multiple datasets?
+- focal loss?
