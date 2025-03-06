@@ -9,9 +9,9 @@ from torchmetrics import MetricCollection
 from torchmetrics.classification import F1Score, Accuracy
 from lightning import LightningModule, Trainer
 
-# import adapters
-# from adapters import LoReftConfig, DiReftConfig, LoRAConfig
-from peft import get_peft_config, get_peft_model, LoraConfig
+import adapters
+from adapters import LoReftConfig, DiReftConfig, LoRAConfig
+# from peft import get_peft_config, get_peft_model, LoraConfig
 from transformers import AutoModel, BitsAndBytesConfig
 
 class HateModule(LightningModule):
@@ -29,14 +29,15 @@ class HateModule(LightningModule):
       # ),
     )
     
-    self.model = get_peft_model(self.model, LoraConfig(
-      inference_mode=False,
-      # inference_mode=False, target_modules=["attn.Wqkv", "attn.Wo"],
-      r=16, lora_alpha=32
-    ))
+    # self.model = get_peft_model(self.model, LoraConfig(
+    #   inference_mode=False,
+    #   # inference_mode=False, target_modules=["attn.Wqkv", "attn.Wo"],
+    #   r=16, lora_alpha=32
+    # ))
 
-    # adapters.init(self.model)
-    # self.model.add_adapter("adapter", DiReftConfig(r=16,dropout=0.1))
+    adapters.init(self.model)
+    self.model.add_adapter("direft", DiReftConfig(r=8,dropout=0.1))
+    self.model.set_active_adapters("direft")
     # # self.model.add_adapter("adapter", LoRAConfig(
     # #   selfattn_lora=True, intermediate_lora=True, output_lora=True,
     # #   attn_matrices=["q", "k", "v"],
