@@ -35,8 +35,6 @@ def do_train(config):
 
 def do_augment(config):
   augmenter = HateAugmenter(config)
-  augmenter.augment()
-  augmenter.save()
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser("hatespeech")
@@ -50,11 +48,26 @@ if __name__ == "__main__":
 
   config = {
     "model": "google/electra-small-discriminator",
+    "targets": [
+      "African", "Arab", "Asexual", "Asian", "Bisexual",
+      "Buddhism", "Caucasian", "Christian", "Disability",
+      "Economic", "Heterosexual", "Hindu", "Hispanic",
+      "Homosexual", "Indian", "Indigenous", "Islam",
+      "Jewish", "Men", "Minority", "None",
+      "Nonreligious", "Other", "Refugee", "Women"
+    ], "labels": [
+      "hatespeech", "normal", "offensive"
+    ],
+    "num_targets": 25,
     "num_labels": 3,
+    "num_annotators": 3,
     "num_augments": 2,
-    "augmented_path": "data/augmented.hf",
+    "augmented_path": "data/augmented.parquet",
+    "augment_batch_size": 32,
+    "augment_num_workers": 5,
+    "tokenize_batch_size": 64,
     "max_length": 128,
-    "batch_size": 128,
+    "batch_size": 40,
     "learning_rate": 1e-5,
   }
 

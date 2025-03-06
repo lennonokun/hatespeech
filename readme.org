@@ -11,3 +11,5 @@
 - augmentation training method?
   - randomized vs total?
   - if randomized, custom dataloader
+- switch to polars
+- use given post_id_divisions.json split?

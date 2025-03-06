@@ -5,12 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "datasets>=3.3.2",
     "lightning[extra]>=2.5.0.post0",
     "matplotlib>=3.10.0",
     "numpy>=2.2.2",
     "pandas>=2.2.3",
     "peft>=0.14.0",
+    "polars>=1.23.0",
     "scikit-learn>=1.6.1",
     "textattack",
     "torch>=2.5.1",
@@ -19,3 +19,6 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers[torch]>=4.48.0",
 ]
+
+[dependency-groups]
+dev = []

@@ -75,33 +75,32 @@ class HateModule(LightningModule):
     pooled = outputs.last_hidden_state[:, 0, :]
     return self.head(pooled)
 
-  def compute(self, tokens, mask, label):
+  def compute(self, batch):
+    tokens, mask, label = (torch.flatten(tensor, end_dim=1) for tensor in batch)
     logits = self(tokens, mask)
     loss = self.criterion(logits, label)
     pred = torch.argmax(logits, axis=-1)
-    return loss, pred
+    hlabel = torch.argmax(label, axis=-1)
+    return loss, pred, hlabel
   
   def training_step(self, batch, batch_idx):
-    tokens, mask, label = batch["tokens"], batch["mask"], batch["label"]
-    loss, pred = self.compute(tokens, mask, label)
-    metrics = self.train_metrics(pred, label)
+    loss, pred, hlabel = self.compute(batch)
+    metrics = self.train_metrics(pred, hlabel)
     
     self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=True)
     self.log_dict(metrics, prog_bar=True, on_epoch=True, on_step=False)
     return loss
   
   def validation_step(self, batch, batch_idx):
-    tokens, mask, label = batch["tokens"], batch["mask"], batch["label"]
-    loss, pred = self.compute(tokens, mask, label)
-    metrics = self.valid_metrics(pred, label)
+    loss, pred, hlabel = self.compute(batch)
+    metrics = self.valid_metrics(pred, hlabel)
     
     self.log("valid_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
     self.log_dict(metrics, prog_bar=True, on_epoch=True, on_step=False)
   
   def test_step(self, batch, batch_idx):
-    tokens, mask, label = batch["tokens"], batch["mask"], batch["label"]
-    loss, pred = self.compute(tokens, mask, label)
-    metrics = self.test_metrics(pred, label)
+    loss, pred, hlabel = self.compute(batch)
+    metrics = self.test_metrics(pred, hlabel)
 
     self.log_dict(metrics, prog_bar=True, on_epoch=True, on_step=False)
   
