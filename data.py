@@ -12,6 +12,7 @@ from textattack.transformations import WordSwapRandomCharacterDeletion, \
 from textattack.constraints.pre_transformation import \
   RepeatModification, StopwordModification
 from textattack.augmentation import Augmenter
+from nltk.tokenize.treebank import TreebankWordDetokenizer
 from transformers import AutoTokenizer
 
 def multi_batched_map(df, func, schema, batch_size, num_workers=1):
@@ -136,10 +137,12 @@ class HateData(LightningDataModule):
     super().__init__()
     self.config = config
     self.tokenizer = AutoTokenizer.from_pretrained(config["model"])
+    self.detokenizer = TreebankWordDetokenizer()
 
   def _tokenize_batch(self, rows):
+    texts = [self.detokenizer.detokenize(text) for text in rows["texts"]]
     tokenized = self.tokenizer(
-      rows["texts"],
+      texts,
       padding="max_length",
       truncation=True,
       max_length=self.config["max_length"],
