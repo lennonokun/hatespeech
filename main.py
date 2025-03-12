@@ -22,11 +22,11 @@ def do_train(config):
     # limit_train_batches=0.5,
     # limit_val_batches=0.2,
     accelerator="auto",
-    precision="bf16-mixed",
     gradient_clip_val=10.0,
+    precision="bf16-mixed",
     devices=1,
     callbacks=[
-      EarlyStopping(monitor="valid_f1", min_delta=0.01, patience=3, mode="max", verbose=True),
+      EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=3, mode="max", verbose=True),
     ],
   )
   trainer.logger.log_hyperparams(config)
@@ -61,14 +61,16 @@ if __name__ == "__main__":
     "num_targets": 25,
     "num_labels": 3,
     "num_annotators": 3,
-    "num_augments": 2,
+    "num_augments": 5,
+    "do_augment": False,
     "augmented_path": "data/augmented.parquet",
     "augment_batch_size": 32,
     "augment_num_workers": 5,
     "tokenize_batch_size": 64,
     "max_length": 128,
-    "batch_size": 40,
-    "learning_rate": 1e-5,
+    "batch_size": 48,
+    "learning_rate": 5e-5,
+    "label_loss_coef": 2.0,
   }
 
   if args.mode == "train":

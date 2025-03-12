@@ -7,11 +7,7 @@ from multiprocessing import Pool
 from torch.utils.data import TensorDataset, DataLoader, random_split
 from lightning import LightningDataModule
 
-from textattack.transformations import WordSwapRandomCharacterDeletion, \
-  WordSwapQWERTY, CompositeTransformation
-from textattack.constraints.pre_transformation import \
-  RepeatModification, StopwordModification
-from textattack.augmentation import Augmenter
+from textattack.augmentation.recipes import EasyDataAugmenter
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 from transformers import AutoTokenizer
 
@@ -38,18 +34,11 @@ class HateAugmenter:
   def __init__(self, config):
     self.config = config
     self.tokenizer = AutoTokenizer.from_pretrained(config["model"])
+    self.detokenizer = TreebankWordDetokenizer()
+    self.augmenter = EasyDataAugmenter(transformations_per_example=config["num_augments"])
 
-    transformation = CompositeTransformation([
-      WordSwapRandomCharacterDeletion(), WordSwapQWERTY()
-    ])
-    constraints = [RepeatModification(), StopwordModification()]
-    self.augmenter = Augmenter(
-      transformation=transformation,
-      constraints=constraints,
-      pct_words_to_swap=0.3,
-      transformations_per_example=config["num_augments"],
-    )
-    self.df = self.process_data(pl.read_json("data/dataset.json"))
+    self.df = pl.read_json("data/dataset.json")
+    self.df = self.process_data(self.df)
     self.df = self.augment(self.df)
     self.df.write_parquet(self.config["augmented_path"])
 
@@ -63,6 +52,33 @@ class HateAugmenter:
     else:
       return np.mean(rationales, axis=0)
 
+  def _augment_batch(self, batch):
+    augmenteds = self.augmenter.augment_many(batch["text"])
+    all_texts = [[text, *augmented] for text, augmented in zip(batch["text"], augmenteds)]
+    return {"texts": all_texts}
+  
+  def augment(self, df):
+    df_train = df.filter(pl.col("split") == "train")
+    df_other = df.filter(pl.col("split") != "train")
+
+    if self.config["do_augment"]:
+      df_train = multi_batched_map(
+        df_train,
+        self._augment_batch,
+        {"texts": pl.List(pl.String)},
+        self.config["augment_batch_size"],
+        self.config["augment_num_workers"],
+      ).drop("text")
+    else:
+      df_train = df_train.with_columns(
+        pl.col("text").map_elements(lambda x: [x], return_dtype=pl.List(pl.String)).alias("texts")
+      ).drop("text")
+    df_other = df_other.with_columns(
+      pl.col("text").map_elements(lambda x: [x], return_dtype=pl.List(pl.String)).alias("texts")
+    ).drop("text")
+
+    return pl.concat([df_train, df_other], how="vertical")
+
   def process_data(self, df):
     # make into record format
     df = df.transpose(column_names=["struct"]) \
@@ -75,6 +91,19 @@ class HateAugmenter:
         pl.col("rationales").cast(pl.List(pl.List(pl.UInt8))),
       )
 
+    # detokenize post tokens
+    df = df.with_columns(
+      pl.col("post_tokens").map_elements(
+        self.detokenizer.detokenize, return_dtype=pl.String,
+      ).alias("text")
+    ).drop("post_tokens")
+
+    # add random train val test split
+    split_fracs = np.random.permutation(len(df)) / len(df)
+    split_conds = [split_fracs < 0.8, split_fracs < 0.9]
+    split_vals = np.select(split_conds, ["train", "valid"], default="test")
+    df = df.with_columns(pl.Series("split", split_vals, dtype=pl.Categorical()))
+    
     # explode annotators and padded rationales
     df = df.with_columns(
         pl.col("rationales").list.gather(
@@ -90,7 +119,7 @@ class HateAugmenter:
       .explode("target") \
       .pivot(on="target", index="index", values="one", aggregate_function="first") \
       .fill_null(0) \
-      .drop(["null", "index"]) \
+      .drop(["index", "null"]) \
       .select(pl.all().name.prefix("target_"))
     df = df.drop("target").to_dummies("label")
     df = pl.concat([df, df_target], how="horizontal")
@@ -101,7 +130,8 @@ class HateAugmenter:
         self._udf_rationale_mean,
         return_dtype=pl.List(pl.Float32)
       ),
-      pl.col("post_tokens").first(),
+      pl.col("text").first(),
+      pl.col("split").first(),
       pl.col("^label_.*$").cast(pl.Float32).mean(),
       pl.col("^target_.*$").cast(pl.Float32).mean(),
     ])
@@ -116,33 +146,15 @@ class HateAugmenter:
 
     return df
 
-  def _augment_batch(self, batch):
-    texts = batch["post_tokens"]
-    augmenteds = self.augmenter.augment_many(texts)
-    all_texts = [[text, *augmented] for text, augmented in zip(texts, augmenteds)]
-    return {"texts": all_texts}
-  
-  def augment(self, df):
-    df = df.with_columns(pl.col("post_tokens").list.join(" "))
-    return multi_batched_map(
-      df,
-      self._augment_batch,
-      {"texts": pl.Array(pl.String, self.config["num_augments"] + 1)},
-      self.config["augment_batch_size"],
-      self.config["augment_num_workers"],
-    ).drop("post_tokens")
-
 class HateData(LightningDataModule):
   def __init__(self, config):
     super().__init__()
     self.config = config
     self.tokenizer = AutoTokenizer.from_pretrained(config["model"])
-    self.detokenizer = TreebankWordDetokenizer()
 
   def _tokenize_batch(self, rows):
-    texts = [self.detokenizer.detokenize(text) for text in rows["texts"]]
     tokenized = self.tokenizer(
-      texts,
+      rows["texts"],
       padding="max_length",
       truncation=True,
       max_length=self.config["max_length"],
@@ -163,21 +175,25 @@ class HateData(LightningDataModule):
       },
       self.config["tokenize_batch_size"],
     ).drop("texts")
-    df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"))
-    df = df.select(
-      pl.col("tokens").cast(pl.Array(pl.Array(pl.Int64, self.config["max_length"]), self.config["num_augments"]+1)),
-      pl.col("mask").cast(pl.Array(pl.Array(pl.Int64, self.config["max_length"]), self.config["num_augments"]+1)),
-      pl.col("label").cast(pl.Array(pl.Array(pl.Float32, self.config["num_labels"]), self.config["num_augments"]+1)),
-    )
+    # print(df)
+    # df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"), pl.col("split").first())
 
-    dataset = TensorDataset(df["tokens"].to_torch(), df["mask"].to_torch(), df["label"].to_torch())
-    datasets = random_split(dataset, [0.8, 0.1, 0.1])
-    splits = ["train", "val", "test"]
-    self.datasets = {k: v for k,v in zip(splits, datasets)}
-
-  def _get_dataloader(self, name):
+    self.datasets = {}
+    for num_augments, split in zip([self.config["num_augments"]+1, 1, 1], ["train", "valid", "test"]):
+      # df_split = df.filter(pl.col("split") == split).filter(pl.col("tokens").list.len() == num_augments).select(
+      df_split = df.filter(pl.col("split") == split).select(
+        pl.col("tokens").cast(pl.Array(pl.Int64, self.config["max_length"])),
+        pl.col("mask").cast(pl.Array(pl.Int64, self.config["max_length"])),
+        pl.col("label").cast(pl.Array(pl.Float32, self.config["num_labels"])),
+        pl.col("target").cast(pl.Array(pl.Float32, self.config["num_targets"])),
+      )
+      self.datasets[split] = TensorDataset(*[
+        df_split[feature].to_torch() for feature in ["tokens", "mask", "label", "target"]
+      ])
+    
+  def _get_dataloader(self, split):
     return DataLoader(
-      self.datasets[name],
+      self.datasets[split],
       batch_size=self.config["batch_size"],
       num_workers=4,
       pin_memory=True
@@ -187,7 +203,7 @@ class HateData(LightningDataModule):
     return self._get_dataloader("train")
   
   def val_dataloader(self):
-    return self._get_dataloader("val")
+    return self._get_dataloader("valid")
   
   def test_dataloader(self):
     return self._get_dataloader("test")

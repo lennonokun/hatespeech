@@ -13,3 +13,8 @@
   - if randomized, custom dataloader
 - switch to polars
 - use given post_id_divisions.json split?
+
+* best
+
+- test acc 0.665
+- test macro f1 0.641
