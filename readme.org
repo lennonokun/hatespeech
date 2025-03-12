@@ -1,20 +1,19 @@
 * todo 
 
 - use reasonings
-- don't only consider majority label
 - augmentation with constraints to not modify reasonings
 - multiple datasets?
 - focal loss?
-- try reft instead of lora
-- check quantization
-- check how im combining post_tokens
 - augmentation training method?
   - randomized vs total?
   - if randomized, custom dataloader
 - switch to polars
-- use given post_id_divisions.json split?
+- re-add augmentation
+- try label smoothing?
 
 * best
 
-- test acc 0.665
-- test macro f1 0.641
+- test label macro acc: 0.665
+- test label macro f1: 0.641
+- test target macro acc: 0.614
+
