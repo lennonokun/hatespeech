@@ -1,5 +1,6 @@
 * todo 
 
+- DEBUG reasonings, currently all 0 i think?
 - use reasonings
 - augmentation with constraints to not modify reasonings
 - multiple datasets?

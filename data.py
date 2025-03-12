@@ -39,6 +39,7 @@ class HateAugmenter:
 
     self.df = pl.read_json("data/dataset.json")
     self.df = self.process_data(self.df)
+    print(self.df)
     self.df = self.augment(self.df)
     self.df.write_parquet(self.config["augmented_path"])
 
@@ -56,6 +57,22 @@ class HateAugmenter:
     augmenteds = self.augmenter.augment_many(batch["text"])
     all_texts = [[text, *augmented] for text, augmented in zip(batch["text"], augmenteds)]
     return {"texts": all_texts}
+
+  def detokenize(self, tokens):
+    text = self.detokenizer.detokenize(tokens)
+    spans = []
+    curr_start = 0
+
+    for token in tokens:
+      if (found := text.find(token, curr_start)) != -1:
+        spans.append((found, found+len(token)))
+        curr_start = found + len(token)
+      elif (found := text.find(token.replace(" ", ""), curr_start)) != -1:
+        spans.append((found, found+len(token)))
+        curr_start = found + len(token)
+      else:
+        spans.append((-1, -1))
+    return {"text": text, "spans": spans}
   
   def augment(self, df):
     df_train = df.filter(pl.col("split") == "train")
@@ -94,9 +111,12 @@ class HateAugmenter:
     # detokenize post tokens
     df = df.with_columns(
       pl.col("post_tokens").map_elements(
-        self.detokenizer.detokenize, return_dtype=pl.String,
-      ).alias("text")
-    ).drop("post_tokens")
+        self.detokenize, return_dtype=pl.Struct([
+          pl.Field("text", pl.String),
+          pl.Field("spans", pl.List(pl.List(pl.Int64))),
+        ]),
+      ).alias("detokenized")
+    ).drop("post_tokens").unnest("detokenized")
 
     # add random train val test split
     split_fracs = np.random.permutation(len(df)) / len(df)
@@ -132,6 +152,7 @@ class HateAugmenter:
       ),
       pl.col("text").first(),
       pl.col("split").first(),
+      pl.col("spans").first(),
       pl.col("^label_.*$").cast(pl.Float32).mean(),
       pl.col("^target_.*$").cast(pl.Float32).mean(),
     ])
@@ -158,10 +179,32 @@ class HateData(LightningDataModule):
       padding="max_length",
       truncation=True,
       max_length=self.config["max_length"],
+      return_offsets_mapping=True,
     )
+
+    # find token labels
+    tokens = np.array(tokenized["input_ids"], dtype=np.int32)
+    mask = np.array(tokenized["attention_mask"], dtype=np.int32)
+    offsets = np.array(tokenized["offset_mapping"], dtype=np.int32)
+    spans = rows["spans"]
+    rationales = rows["rationales"]
+
+    rationales2 = np.zeros((len(tokens), self.config["max_length"]) , dtype=np.float32)
+
+    for i in range(len(rows)):
+      for rationale, (span_start, span_end) in zip(rationales[i], spans[i]):
+        if rationale > 0:
+          for j in range(self.config["max_length"]):
+            check_left = offsets[i, j, 0] >= span_start
+            check_right = offsets[i, j, 1] <= span_end
+            valid = offsets[i, j, 0] != offsets[i, j, 1]
+            if check_left and check_right and valid:
+              rationales2[i, j] = rationale
+
     return {
-      "tokens": tokenized["input_ids"],
-      "mask": tokenized["attention_mask"],
+      "tokens": tokens.tolist(),
+      "mask": mask.tolist(),
+      "rationales2": rationales2.tolist()
     }
 
   def setup(self, stage: str):
@@ -171,11 +214,12 @@ class HateData(LightningDataModule):
       df, self._tokenize_batch,
       {
         "tokens": pl.Array(pl.Int64, self.config["max_length"]),
-        "mask": pl.Array(pl.Int64, self.config["max_length"])
+        "mask": pl.Array(pl.Int64, self.config["max_length"]),
+        "rationales2": pl.Array(pl.Float32, self.config["max_length"])
       },
       self.config["tokenize_batch_size"],
-    ).drop("texts")
-    # print(df)
+    ).drop(["texts", "rationales"]).rename({"rationales2": "rationales"})
+    print(df)
     # df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"), pl.col("split").first())
 
     self.datasets = {}
@@ -186,9 +230,10 @@ class HateData(LightningDataModule):
         pl.col("mask").cast(pl.Array(pl.Int64, self.config["max_length"])),
         pl.col("label").cast(pl.Array(pl.Float32, self.config["num_labels"])),
         pl.col("target").cast(pl.Array(pl.Float32, self.config["num_targets"])),
+        pl.col("rationales").cast(pl.Array(pl.Float32, self.config["max_length"])),
       )
       self.datasets[split] = TensorDataset(*[
-        df_split[feature].to_torch() for feature in ["tokens", "mask", "label", "target"]
+        df_split[feature].to_torch() for feature in ["tokens", "mask", "label", "target", "rationales"]
       ])
     
   def _get_dataloader(self, split):

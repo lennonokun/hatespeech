@@ -66,11 +66,13 @@ if __name__ == "__main__":
     "augmented_path": "data/augmented.parquet",
     "augment_batch_size": 32,
     "augment_num_workers": 5,
+    "logging": "terminal",
     "tokenize_batch_size": 64,
     "max_length": 128,
-    "batch_size": 48,
+    "batch_size": 32,
     "learning_rate": 5e-5,
     "label_loss_coef": 2.0,
+    "rationale_loss_coef": 100.0,
   }
 
   if args.mode == "train":
