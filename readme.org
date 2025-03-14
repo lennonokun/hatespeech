@@ -25,6 +25,7 @@
 - large scale crowdsourcing + characterization...
   - pub: https://arxiv.org/pdf/1802.00393.pdf
   - data: https://dataverse.mpi-sws.org/dataset.xhtml?persistentId=doi:10.5072/FK2/ZDTEMN
+  - requested data but it says to follow email but i dont see yet
 - hateval semeval-2019 task 5?
   - pub: https://www.aclweb.org/anthology/S19-2007
   - proportion abusive: 0.4
@@ -32,7 +33,6 @@
   - data link not working?
 - ethos: an online hate speech detection dataset (binary)
   - pub: https://arxiv.org/pdf/2006.08328.pdf
-  - data: https://arxiv.org/pdf/2006.08328.pdf
   - proportion abusive: 0.33
 - twitter sentiment analysis
   - data:

@@ -10,6 +10,7 @@ from datasets.utils.logging import disable_progress_bar
 
 from data import HateData, HateAugmenter
 from module import HateModule
+from visualize import HateVisualizer
 
 def do_train(config):
   torch.cuda.empty_cache()
@@ -36,6 +37,10 @@ def do_train(config):
 def do_augment(config):
   augmenter = HateAugmenter(config)
 
+def do_visualize(config):
+  visualizer = HateVisualizer(config)
+  visualizer.visualize_repl()
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser("hatespeech")
   parser.add_argument("mode", type=str)
@@ -48,6 +53,7 @@ if __name__ == "__main__":
 
   config = {
     "model": "google/electra-small-discriminator",
+    "best_model": "lightning_logs/version_217/checkpoints/epoch=10-step=1386.ckpt",
     "targets": [
       "African", "Arab", "Asexual", "Asian", "Bisexual",
       "Buddhism", "Caucasian", "Christian", "Disability",
@@ -79,3 +85,5 @@ if __name__ == "__main__":
     do_train(config)
   elif args.mode == "augment":
     do_augment(config)
+  elif args.mode == "visualize":
+    do_visualize(config)

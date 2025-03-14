@@ -144,6 +144,17 @@ class HateModule(LightningModule):
     logits_rationale = self.head_rationale(nonpooled).squeeze(-1)
     return logits_label, logits_target, logits_rationale
 
+  @torch.no_grad()
+  def predict(self, tokens, mask):
+    tokens, mask = tuple(torch.from_numpy(arr).to(self.model.device) for arr in [tokens, mask])
+    logits_label, logits_target, logits_rationale = self(tokens, mask)
+    prob_label = F.softmax(logits_label, dim=1)
+    prob_target = F.sigmoid(logits_target)
+    prob_rationale = F.sigmoid(logits_rationale)
+    return tuple(tensor.cpu().numpy() for tensor in [
+      prob_label, prob_target, prob_rationale
+    ])
+  
   def compute(self, batch):
     tokens, mask, label, target, rationale = batch
     # tokens, mask, label = (torch.flatten(tensor, end_dim=1) for tensor in batch)
@@ -192,7 +203,7 @@ class HateModule(LightningModule):
       self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
       self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
       self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)
-  
+    
   def training_step(self, batch, _):
     return self.compute_step(batch, "train")
   
