@@ -133,6 +133,9 @@ class HateAugmenter:
       ).explode("annotators", "rationales") \
       .unnest("annotators")
 
+    # remove offensive
+    df = df.with_columns(pl.col("label").cast(pl.String).replace("offensive", "normal").cast(pl.Categorical))
+
     # make label and target one-hot
     df_target = df.with_columns(pl.lit(1).alias("one")) \
       .with_row_index("index") \
@@ -164,6 +167,9 @@ class HateAugmenter:
       label=pl.concat_arr(label_names).cast(pl.Array(pl.Float32, self.config["num_labels"])),
       target=pl.concat_arr(target_names).cast(pl.Array(pl.Float32, self.config["num_targets"])),
     ).drop(label_names + target_names)
+
+    # remove samples without label consensus
+    # df = df.filter(pl.col("label").arr.max().gt(0.5))
 
     return df
 

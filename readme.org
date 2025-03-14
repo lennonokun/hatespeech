@@ -1,16 +1,44 @@
-* todo 
+* todo
 
-- DEBUG reasonings, currently all 0 i think?
-- use reasonings
 - augmentation with constraints to not modify reasonings
 - multiple datasets?
-- focal loss?
 - augmentation training method?
   - randomized vs total?
   - if randomized, custom dataloader
-- switch to polars
-- re-add augmentation
 - try label smoothing?
+- make offensive label just normal to focus on hatespeech?
+- attention mechanism with rationales?
+
+- use hatebase for lexicon features
+- dataset combination
+  - include dataset origin as input?
+  - ^ could fuzzify it so that it works for general also
+  - ^ could use TaBERT or use as input in classification head
+
+* datasets
+
+- hatexplain
+  - pub: https://arxiv.org/pdf/2012.10289.pdf
+  - data: https://github.com/punyajoy/HateXplain
+  - proportion abusive: 0.57
+  - USING
+- large scale crowdsourcing + characterization...
+  - pub: https://arxiv.org/pdf/1802.00393.pdf
+  - data: https://dataverse.mpi-sws.org/dataset.xhtml?persistentId=doi:10.5072/FK2/ZDTEMN
+- hateval semeval-2019 task 5?
+  - pub: https://www.aclweb.org/anthology/S19-2007
+  - proportion abusive: 0.4
+  - specific to women and immigrants
+  - data link not working?
+- ethos: an online hate speech detection dataset (binary)
+  - pub: https://arxiv.org/pdf/2006.08328.pdf
+  - data: https://arxiv.org/pdf/2006.08328.pdf
+  - proportion abusive: 0.33
+- twitter sentiment analysis
+  - data:
+    https://www.kaggle.com/arkhoshghalb/twitter-sentiment-analysis-hatred-speech
+  - proportion abusive: 0.07
+  - racism/sexism specific
 
 * best
 

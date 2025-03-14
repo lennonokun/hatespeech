@@ -56,10 +56,10 @@ if __name__ == "__main__":
       "Jewish", "Men", "Minority", "None",
       "Nonreligious", "Other", "Refugee", "Women"
     ], "labels": [
-      "hatespeech", "normal", "offensive"
+      "hatespeech", "normal",
     ],
     "num_targets": 25,
-    "num_labels": 3,
+    "num_labels": 2,
     "num_annotators": 3,
     "num_augments": 5,
     "do_augment": False,
@@ -69,10 +69,10 @@ if __name__ == "__main__":
     "logging": "terminal",
     "tokenize_batch_size": 64,
     "max_length": 128,
-    "batch_size": 32,
+    "batch_size": 128,
     "learning_rate": 5e-5,
-    "label_loss_coef": 2.0,
-    "rationale_loss_coef": 100.0,
+    "target_loss_coef": 2.0,
+    "rationale_loss_coef": 40.0,
   }
 
   if args.mode == "train":

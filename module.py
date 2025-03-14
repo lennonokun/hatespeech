@@ -12,7 +12,7 @@ from torchmetrics.classification import F1Score, Accuracy
 from lightning import LightningModule
 
 import adapters
-from adapters import DiReftConfig
+from adapters import DiReftConfig, LoRAConfig, LoReftConfig
 from transformers import AutoModel, QuantoConfig
 
 class MaskedBinaryAccuracy(Metric):
@@ -89,15 +89,18 @@ class HateModule(LightningModule):
     )
 
     adapters.init(self.model)
-    self.model.add_adapter("direft", DiReftConfig(r=8, dropout=0.2))
-    self.model.set_active_adapters("direft")
+    # self.model.add_adapter("adapter", DiReftConfig(r=8, dropout=0.1))
+    # self.model.add_adapter("adapter", LoRAConfig(r=8, alpha=32))
+    self.model.add_adapter("adapter", LoReftConfig(r=8))
+    self.model.set_active_adapters("adapter")
 
     self.head_label = nn.Linear(self.model.config.hidden_size, config["num_labels"])
     self.head_target = nn.Linear(self.model.config.hidden_size, config["num_targets"])
     self.head_rationale = nn.Linear(self.model.config.hidden_size, 1)
 
     # TODO: weights / focal loss for targets and rationales
-    self.cross_entropy = nn.CrossEntropyLoss()
+    self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.05)
+    self.bce_loss = nn.BCEWithLogitsLoss()
     self.focal_loss = MaskedFocalLoss(alpha=0.3, gamma=2.0, epsilon=0.05)
     
     self.splits = ["train", "valid", "test"]
@@ -135,7 +138,7 @@ class HateModule(LightningModule):
   def forward(self, tokens, mask):
     outputs = self.model(input_ids=tokens, attention_mask=mask)
     nonpooled = outputs[0] # todo
-    pooled = outputs.last_hidden_state[:, 0, :]
+    pooled = outputs.last_hidden_state.mean(dim=1)
     logits_label = self.head_label(pooled)
     logits_target = self.head_target(pooled)
     logits_rationale = self.head_rationale(nonpooled).squeeze(-1)
@@ -146,12 +149,12 @@ class HateModule(LightningModule):
     # tokens, mask, label = (torch.flatten(tensor, end_dim=1) for tensor in batch)
     logits_label, logits_target, logits_rationale = self(tokens, mask)
 
-    loss_label = self.cross_entropy(logits_label, label)
+    loss_label = self.ce_loss(logits_label, label)
     pred_label = torch.argmax(logits_label, dim=-1)
     hard_label = torch.argmax(label, dim=-1)
     results_label = (loss_label, pred_label, hard_label)
 
-    loss_target = self.cross_entropy(logits_target, target)
+    loss_target = self.bce_loss(logits_target, target)
     pred_target = torch.ge(logits_target, 0)
     hard_target = torch.ge(target, 0.5)
     results_target = (loss_target, pred_target, hard_target)
@@ -184,7 +187,7 @@ class HateModule(LightningModule):
       self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # TODO linear combination
-      return self.config["label_loss_coef"] * loss_label + loss_target + self.config["rationale_loss_coef"] * loss_rationale
+      return loss_label + self.config["target_loss_coef"] * loss_target + self.config["rationale_loss_coef"] * loss_rationale
     elif split == "valid":
       self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
       self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
