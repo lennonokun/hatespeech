@@ -23,11 +23,11 @@ def do_train(config):
     # limit_train_batches=0.5,
     # limit_val_batches=0.2,
     accelerator="auto",
-    gradient_clip_val=10.0,
+    # gradient_clip_val=10.0,
     precision="bf16-mixed",
     devices=1,
     callbacks=[
-      EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=3, mode="max", verbose=True),
+      EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
     ],
   )
   trainer.logger.log_hyperparams(config)
@@ -76,9 +76,10 @@ if __name__ == "__main__":
     "tokenize_batch_size": 64,
     "max_length": 128,
     "batch_size": 128,
-    "learning_rate": 5e-5,
-    "target_loss_coef": 2.0,
-    "rationale_loss_coef": 40.0,
+    "learning_rate": 1e-4,
+    "patience": 4,
+    # "target_loss_coef": 20.0,
+    # "rationale_loss_coef": 40.0,
   }
 
   if args.mode == "train":

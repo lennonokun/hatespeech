@@ -42,7 +42,15 @@
 
 * best
 
+with offensive
 - test label macro acc: 0.665
 - test label macro f1: 0.641
 - test target macro acc: 0.614
 
+without offensive:
+- test label macro acc: 0.784
+- test label macro f1: 0.790
+- test rationale macro acc: 0.983
+- test rationale macro f1: 0.496
+- test target macro acc: 0.961
+- test target macro f1: 0.065

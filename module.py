@@ -69,7 +69,7 @@ class MaskedFocalLoss(nn.Module):
     alpha_t = self.alpha * labels + (1 - self.alpha) * (1 - labels)
     bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
     loss = alpha_t * ((1 - probs_t) ** self.gamma) * bce_loss
-    return (loss * masks).sum() / masks.sum()
+    return (loss * masks).sum() / (masks.sum() + 1e-8)
 
 class HateModule(LightningModule):
   def __init__(self, config):
@@ -92,6 +92,7 @@ class HateModule(LightningModule):
     # self.model.add_adapter("adapter", DiReftConfig(r=8, dropout=0.1))
     # self.model.add_adapter("adapter", LoRAConfig(r=8, alpha=32))
     self.model.add_adapter("adapter", LoReftConfig(r=8))
+
     self.model.set_active_adapters("adapter")
 
     self.head_label = nn.Linear(self.model.config.hidden_size, config["num_labels"])
@@ -100,12 +101,18 @@ class HateModule(LightningModule):
 
     # TODO: weights / focal loss for targets and rationales
     self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.05)
-    self.bce_loss = nn.BCEWithLogitsLoss()
-    self.focal_loss = MaskedFocalLoss(alpha=0.3, gamma=2.0, epsilon=0.05)
+    # self.bce_loss = nn.BCEWithLogitsLoss()
+    self.focal_loss = MaskedFocalLoss(alpha=0.2, gamma=3.0, epsilon=0.05)
+    # log space
+    self.sigma = nn.Parameter(torch.zeros(3))
     
     self.splits = ["train", "valid", "test"]
     self.target_metrics = {split: MetricCollection({
       "acc": Accuracy(
+        task="multilabel",
+        num_labels=config["num_targets"],
+        average="macro",
+      ), "f1": F1Score(
         task="multilabel",
         num_labels=config["num_targets"],
         average="macro",
@@ -126,13 +133,14 @@ class HateModule(LightningModule):
       "acc": MaskedBinaryAccuracy(),
       "f1": MaskedBinaryF1(),
     }, prefix=f"{split}_rationale_").cuda() for split in self.splits}
+
    
   def configure_optimizers(self):
-    optimizer = AdamW(
-      filter(lambda p: p.requires_grad, self.parameters()),
-      lr=self.config["learning_rate"],
-      weight_decay=2e-2,
-    )
+    std_params = filter(lambda p: p is not self.sigma and p.requires_grad, self.parameters())
+    optimizer = AdamW([
+      {"params": std_params, "lr": self.config["learning_rate"]},
+      {"params": self.sigma, "lr": self.config["learning_rate"] * 100},
+    ])
     return optimizer
 
   def forward(self, tokens, mask):
@@ -157,7 +165,6 @@ class HateModule(LightningModule):
   
   def compute(self, batch):
     tokens, mask, label, target, rationale = batch
-    # tokens, mask, label = (torch.flatten(tensor, end_dim=1) for tensor in batch)
     logits_label, logits_target, logits_rationale = self(tokens, mask)
 
     loss_label = self.ce_loss(logits_label, label)
@@ -165,12 +172,15 @@ class HateModule(LightningModule):
     hard_label = torch.argmax(label, dim=-1)
     results_label = (loss_label, pred_label, hard_label)
 
-    loss_target = self.bce_loss(logits_target, target)
+    loss_target = self.focal_loss(logits_target, target, torch.ones_like(target))
     pred_target = torch.ge(logits_target, 0)
     hard_target = torch.ge(target, 0.5)
     results_target = (loss_target, pred_target, hard_target)
 
-    loss_rationale = self.focal_loss(logits_rationale, rationale, mask)
+    # only check given rationales
+    # todo weigh by number of valid annotations?
+    mask_rationale = mask & torch.reshape(label[:, 1].ge(0), (-1, 1))
+    loss_rationale = self.focal_loss(logits_rationale, rationale, mask_rationale)
     pred_rationale = torch.ge(logits_rationale, 0)
     hard_rationale = torch.ge(rationale, 0.5)
     results_rationale = (loss_rationale, pred_rationale, hard_rationale)
@@ -192,17 +202,21 @@ class HateModule(LightningModule):
     self.log_dict(label_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
     self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
 
+    loss = torch.stack([loss_label, loss_target, loss_rationale])
+    weights = self.sigma.exp()
+    loss = 0.5 * (loss / weights**2).sum() + weights.prod().log()
     if split == "train":
       log_loss_on_step = self.config["logging"] != "terminal"
-      self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      # TODO linear combination
-      return loss_label + self.config["target_loss_coef"] * loss_target + self.config["rationale_loss_coef"] * loss_rationale
+      # self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
+      # self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
+      # self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
+      self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
+      return loss
     elif split == "valid":
-      self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
-      self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
-      self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)
+      self.log("valid_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
+      # self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
+      # self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
+      # self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)
     
   def training_step(self, batch, _):
     return self.compute_step(batch, "train")
