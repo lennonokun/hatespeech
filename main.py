@@ -5,6 +5,7 @@ import argparse
 import torch
 from lightning import Trainer
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 from datasets.utils.logging import disable_progress_bar
 
@@ -23,14 +24,15 @@ def do_train(config):
     # limit_train_batches=0.5,
     # limit_val_batches=0.2,
     accelerator="auto",
-    # gradient_clip_val=10.0,
+    # gradient_clip_val=5.0,
     precision="bf16-mixed",
+    logger=TensorBoardLogger("tb_logs", name="hatexplain"),
     devices=1,
     callbacks=[
       EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
     ],
   )
-  trainer.logger.log_hyperparams(config)
+  # trainer.logger.log_hyperparams(config)
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
@@ -39,7 +41,8 @@ def do_augment(config):
 
 def do_visualize(config):
   visualizer = HateVisualizer(config)
-  visualizer.visualize_repl()
+  visualizer.visualize_dataset()
+  # visualizer.visualize_repl()
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser("hatespeech")
@@ -53,21 +56,21 @@ if __name__ == "__main__":
 
   config = {
     "model": "google/electra-small-discriminator",
-    "best_model": "lightning_logs/version_217/checkpoints/epoch=10-step=1386.ckpt",
+    "best_model": "tb_logs/hatexplain/version_6/checkpoints/epoch=13-step=1764.ckpt",
     "targets": [
       "African", "Arab", "Asexual", "Asian", "Bisexual",
       "Buddhism", "Caucasian", "Christian", "Disability",
       "Economic", "Heterosexual", "Hindu", "Hispanic",
       "Homosexual", "Indian", "Indigenous", "Islam",
-      "Jewish", "Men", "Minority", "None",
+      "Jewish", "Men", "Minority", # "None",
       "Nonreligious", "Other", "Refugee", "Women"
-    ], "labels": [
-      "hatespeech", "normal",
-    ],
-    "num_targets": 25,
+    ], "targets_ignore": ["None"],
+    "labels": ["hatespeech", "normal"],
+    "num_targets": 24,
     "num_labels": 2,
     "num_annotators": 3,
     "num_augments": 5,
+    "num_tasks": 3,
     "do_augment": False,
     "augmented_path": "data/augmented.parquet",
     "augment_batch_size": 32,
@@ -76,10 +79,8 @@ if __name__ == "__main__":
     "tokenize_batch_size": 64,
     "max_length": 128,
     "batch_size": 128,
-    "learning_rate": 1e-4,
+    "learning_rate": 5e-5,
     "patience": 4,
-    # "target_loss_coef": 20.0,
-    # "rationale_loss_coef": 40.0,
   }
 
   if args.mode == "train":

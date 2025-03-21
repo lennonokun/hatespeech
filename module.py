@@ -1,4 +1,4 @@
-# import numpy as np
+import numpy as np
 
 import torch
 from torch import nn
@@ -71,10 +71,28 @@ class MaskedFocalLoss(nn.Module):
     loss = alpha_t * ((1 - probs_t) ** self.gamma) * bce_loss
     return (loss * masks).sum() / (masks.sum() + 1e-8)
 
+class MaskedImbalancedBCELoss(nn.Module):
+  def __init__(self, pos_freq=None):
+    super().__init__()
+    if pos_freq is not None:
+      self.set_freq(pos_freq)
+
+  def set_freq(self, pos_freq):
+    self.pos_weight = torch.Tensor([(1 - pos_freq) / pos_freq]).cuda()
+
+  def forward(self, logits, labels, masks):
+    losses = F.binary_cross_entropy_with_logits(
+      logits, labels,
+      pos_weight=self.pos_weight,
+      reduction="none"
+    )
+    return (losses * masks).sum() / (masks.sum() + 1e-8)
+    
 class HateModule(LightningModule):
   def __init__(self, config):
     super().__init__()
     self.save_hyperparameters()
+    # self.automatic_optimization = False
     self.config = config
     self.model = AutoModel.from_pretrained(
       config["model"],
@@ -92,9 +110,8 @@ class HateModule(LightningModule):
     # self.model.add_adapter("adapter", DiReftConfig(r=8, dropout=0.1))
     # self.model.add_adapter("adapter", LoRAConfig(r=8, alpha=32))
     self.model.add_adapter("adapter", LoReftConfig(r=8))
-
     self.model.set_active_adapters("adapter")
-
+    
     self.head_label = nn.Linear(self.model.config.hidden_size, config["num_labels"])
     self.head_target = nn.Linear(self.model.config.hidden_size, config["num_targets"])
     self.head_rationale = nn.Linear(self.model.config.hidden_size, 1)
@@ -102,9 +119,13 @@ class HateModule(LightningModule):
     # TODO: weights / focal loss for targets and rationales
     self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.05)
     # self.bce_loss = nn.BCEWithLogitsLoss()
-    self.focal_loss = MaskedFocalLoss(alpha=0.2, gamma=3.0, epsilon=0.05)
+    self.focal_loss = MaskedFocalLoss(alpha=0.1, gamma=2.0, epsilon=0.05)
+    self.rationale_loss = MaskedImbalancedBCELoss()
     # log space
-    self.sigma = nn.Parameter(torch.zeros(3))
+    self.task_weights = nn.Parameter(torch.zeros(3))
+    # self.task_temps = nn.Parameter(torch.Tensor(self.config["task_temperatures"]), requires_grad=False)
+    # self.grad_norm_weights = [v for (k,v) in self.named_parameters() if "11.reft_layer" in k]
+    # self.l0 = None
     
     self.splits = ["train", "valid", "test"]
     self.target_metrics = {split: MetricCollection({
@@ -133,20 +154,25 @@ class HateModule(LightningModule):
       "acc": MaskedBinaryAccuracy(),
       "f1": MaskedBinaryF1(),
     }, prefix=f"{split}_rationale_").cuda() for split in self.splits}
-
    
   def configure_optimizers(self):
-    std_params = filter(lambda p: p is not self.sigma and p.requires_grad, self.parameters())
-    optimizer = AdamW([
+    std_params = filter(lambda p: p is not self.task_weights and p.requires_grad, self.parameters())
+    return AdamW([
       {"params": std_params, "lr": self.config["learning_rate"]},
-      {"params": self.sigma, "lr": self.config["learning_rate"] * 100},
+      {"params": [self.task_weights], "lr": self.config["learning_rate"] * 10},
     ])
-    return optimizer
+    # return [
+    #   AdamW(std_params, lr=self.config["learning_rate"]),
+    #   AdamW([self.task_weights], lr=self.config["learning_rate"]),
+    # ]
+
+  def on_fit_start(self):
+    self.rationale_loss.set_freq(self.trainer.datamodule.stats["rationale_freq"])
 
   def forward(self, tokens, mask):
     outputs = self.model(input_ids=tokens, attention_mask=mask)
-    nonpooled = outputs[0] # todo
-    pooled = outputs.last_hidden_state.mean(dim=1)
+    nonpooled = outputs.last_hidden_state
+    pooled = outputs.last_hidden_state[:, 0, :]
     logits_label = self.head_label(pooled)
     logits_target = self.head_target(pooled)
     logits_rationale = self.head_rationale(nonpooled).squeeze(-1)
@@ -179,48 +205,77 @@ class HateModule(LightningModule):
 
     # only check given rationales
     # todo weigh by number of valid annotations?
-    mask_rationale = mask & torch.reshape(label[:, 1].ge(0), (-1, 1))
-    loss_rationale = self.focal_loss(logits_rationale, rationale, mask_rationale)
+    mask_rationale = mask & torch.reshape(label[:, 1].gt(0), (-1, 1))
+    loss_rationale = self.rationale_loss(logits_rationale, rationale, mask_rationale)
     pred_rationale = torch.ge(logits_rationale, 0)
     hard_rationale = torch.ge(rationale, 0.5)
-    results_rationale = (loss_rationale, pred_rationale, hard_rationale)
+    results_rationale = (loss_rationale, pred_rationale, hard_rationale, mask_rationale)
     
     return results_label, results_target, results_rationale
 
   def compute_step(self, batch, split):
-    mask = batch[1]
     results_label, results_target, results_rationale = self.compute(batch)
     loss_label, pred_label, hard_label = results_label
     loss_target, pred_target, hard_target = results_target
-    loss_rationale, pred_rationale, hard_rationale = results_rationale
+    loss_rationale, pred_rationale, hard_rationale, mask_rationale = results_rationale
 
     target_metrics = self.target_metrics[split](pred_target, hard_target)
     label_metrics = self.label_metrics[split](pred_label, hard_label)
-    rationale_metrics = self.rationale_metrics[split](pred_rationale, hard_rationale, mask)
+    rationale_metrics = self.rationale_metrics[split](pred_rationale, hard_rationale, mask_rationale)
+
     log_metrics_on_step = split == "train" and self.config["logging"] != "terminal"
     self.log_dict(target_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
     self.log_dict(label_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
     self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
 
-    loss = torch.stack([loss_label, loss_target, loss_rationale])
-    weights = self.sigma.exp()
-    loss = 0.5 * (loss / weights**2).sum() + weights.prod().log()
+    losses = torch.stack([loss_label, loss_target, loss_rationale])
+    loss = 0.5 * (losses / (self.task_weights.exp() ** 2)).sum() + self.task_weights.sum()
     if split == "train":
       log_loss_on_step = self.config["logging"] != "terminal"
+      self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       return loss
     elif split == "valid":
       self.log("valid_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)
-    
-  def training_step(self, batch, _):
+
+  def training_step(self, batch):
     return self.compute_step(batch, "train")
-  
+
+  # def training_step(self, batch):
+  #   opt1, opt2 = tuple(self.optimizers())
+
+  #   opt1.zero_grad()
+  #   losses, total_loss = self.compute_step(batch, "train")
+  #   # print(losses, total_loss)
+  #   total_loss.backward(retain_graph=True)
+
+  #   if self.l0 is None:
+  #     self.l0 = losses.detach()
+  #   loss_ratio = losses.detach() / self.l0
+  #   rt = loss_ratio / loss_ratio.mean()
+
+  #   gw = torch.stack([torch.norm(torch.autograd.grad(
+  #     losses[i], self.grad_norm_weights,
+  #     retain_graph=True, create_graph=True
+  #   )[0]) for i in range(self.config["num_tasks"])])
+  #   gw_avg = gw.mean().detach()
+
+  #   constant = (gw_avg * rt ** 1.5).detach()
+  #   opt2.zero_grad()
+  #   gn_loss = torch.abs(gw - constant).sum()
+  #   gn_loss.backward()
+
+  #   opt1.step()
+  #   opt2.step()
+
+  #   self.task_weights = nn.Parameter(self.task_weights / self.task_weights.sum() * self.config["num_tasks"])
+  #   print(self.task_weights)
+ 
   def validation_step(self, batch, _):
     return self.compute_step(batch, "valid")
   

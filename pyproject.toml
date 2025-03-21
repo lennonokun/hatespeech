@@ -14,6 +14,7 @@ dependencies = [
     "pandas>=2.2.3",
     "polars>=1.23.0",
     "scikit-learn>=1.6.1",
+    "tensorboard>=2.19.0",
     "textattack",
     "torch>=2.5.1",
     "torchinfo>=1.8.0",

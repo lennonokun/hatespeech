@@ -1,5 +1,6 @@
 import polars as pl
 import numpy as np
+import json
 from tqdm import tqdm
 
 from multiprocessing import Pool
@@ -163,10 +164,11 @@ class HateAugmenter:
     # combine labels and targets into one array
     label_names = [f"label_{name}" for name in self.config["labels"]]
     target_names = [f"target_{name}" for name in self.config["targets"]]
+    target_ignore_names = [f"target_{name}" for name in self.config["targets_ignore"]]
     df = df.with_columns(
       label=pl.concat_arr(label_names).cast(pl.Array(pl.Float32, self.config["num_labels"])),
       target=pl.concat_arr(target_names).cast(pl.Array(pl.Float32, self.config["num_targets"])),
-    ).drop(label_names + target_names)
+    ).drop(label_names + target_names + target_ignore_names)
 
     # remove samples without label consensus
     # df = df.filter(pl.col("label").arr.max().gt(0.5))
@@ -195,9 +197,13 @@ class HateData(LightningDataModule):
     spans = rows["spans"]
     rationales = rows["rationales"]
 
-    rationales2 = np.zeros((len(tokens), self.config["max_length"]) , dtype=np.float32)
+    # print(rationales)
+    rationales2 = np.zeros((len(tokens), self.config["max_length"]), dtype=np.float32)
+    # print(len(rows))
+    # print(len(rationales))
+    # print(len(spans))
 
-    for i in range(len(rows)):
+    for i in range(len(rows["texts"])):
       for rationale, (span_start, span_end) in zip(rationales[i], spans[i]):
         if rationale > 0:
           for j in range(self.config["max_length"]):
@@ -207,41 +213,51 @@ class HateData(LightningDataModule):
             if check_left and check_right and valid:
               rationales2[i, j] = rationale
 
+    # with np.printoptions(threshold=12838238472):
+    #   print(spans)
+    #   print(offsets)
+    #   print(rationales)
+    #   print(rationales2[:, :20])
+
     return {
       "tokens": tokens.tolist(),
       "mask": mask.tolist(),
-      "rationales2": rationales2.tolist()
+      "rationales2": rationales2.tolist(),
+      "offsets": offsets.tolist(),
     }
 
   def setup(self, stage: str):
     df = pl.read_parquet(self.config["augmented_path"])
     df = df.explode("texts")
     df = multi_batched_map(
-      df, self._tokenize_batch,
-      {
+      df, self._tokenize_batch, {
         "tokens": pl.Array(pl.Int64, self.config["max_length"]),
         "mask": pl.Array(pl.Int64, self.config["max_length"]),
-        "rationales2": pl.Array(pl.Float32, self.config["max_length"])
+        "rationales2": pl.Array(pl.Float32, self.config["max_length"]),
+        "offsets": pl.Array(pl.Array(pl.Int64, 2), self.config["max_length"]),
       },
       self.config["tokenize_batch_size"],
-    ).drop(["texts", "rationales"]).rename({"rationales2": "rationales"})
-    print(df)
+    ).drop("rationales").rename({"rationales2": "rationales"})
+
+    rationale_count = df.select(pl.col("rationales").arr.sum()).sum().item()
+    mask_count = df.select(pl.col("mask").arr.sum()).sum().item()
+    self.stats = {
+      "label_freq": df.select(pl.col("label").arr.to_struct().struct.unnest()).mean().to_numpy()[0],
+      "target_freq": df.select(pl.col("target").arr.to_struct().struct.unnest()).mean().to_numpy()[0],
+      "rationale_freq": rationale_count / mask_count,
+    }
     # df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"), pl.col("split").first())
 
-    self.datasets = {}
-    for num_augments, split in zip([self.config["num_augments"]+1, 1, 1], ["train", "valid", "test"]):
-      # df_split = df.filter(pl.col("split") == split).filter(pl.col("tokens").list.len() == num_augments).select(
-      df_split = df.filter(pl.col("split") == split).select(
-        pl.col("tokens").cast(pl.Array(pl.Int64, self.config["max_length"])),
-        pl.col("mask").cast(pl.Array(pl.Int64, self.config["max_length"])),
-        pl.col("label").cast(pl.Array(pl.Float32, self.config["num_labels"])),
-        pl.col("target").cast(pl.Array(pl.Float32, self.config["num_targets"])),
-        pl.col("rationales").cast(pl.Array(pl.Float32, self.config["max_length"])),
-      )
-      self.datasets[split] = TensorDataset(*[
-        df_split[feature].to_torch() for feature in ["tokens", "mask", "label", "target", "rationales"]
-      ])
-    
+    if stage == "visualize":
+      self.df = df
+    else:
+      self.datasets = {}
+      for split in ["train", "valid", "test"]:
+        # df_split = df.filter(pl.col("split") == split).filter(pl.col("tokens").list.len() == num_augments).select(
+        features = ["tokens", "mask", "label", "target", "rationales"]
+        df_split = df.filter(pl.col("split") == split).select(features)
+        self.datasets[split] = TensorDataset(*[df_split[feature].to_torch() for feature in features])
+
   def _get_dataloader(self, split):
     return DataLoader(
       self.datasets[split],

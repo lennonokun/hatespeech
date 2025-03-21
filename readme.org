@@ -15,6 +15,8 @@
   - ^ could fuzzify it so that it works for general also
   - ^ could use TaBERT or use as input in classification head
 
+- rationales mask including not classifying invalid tokens
+
 * datasets
 
 - hatexplain
