@@ -71,6 +71,27 @@ class MaskedFocalLoss(nn.Module):
     loss = alpha_t * ((1 - probs_t) ** self.gamma) * bce_loss
     return (loss * masks).sum() / (masks.sum() + 1e-8)
 
+class MultilabelImbalancedBCELoss(nn.Module):
+  def __init__(self, label_freqs=None):
+    super().__init__()
+    if label_freqs is not None:
+      self.set_label_freq(label_freqs)
+
+  def set_label_freq(self, label_freqs):
+    self.pos_weights = torch.Tensor((1 - label_freqs) / label_freqs).cuda()
+    self.neg_weights = torch.Tensor(label_freqs / (1 - label_freqs)).cuda()
+
+  def forward(self, logits, labels, masks=None):
+    losses = F.binary_cross_entropy_with_logits(
+      logits, labels, reduction="none",
+    )
+    losses *= labels * self.pos_weights[None, :] + (1 - labels) * self.neg_weights[None, :]
+
+    if masks is not None:
+      return (losses * masks).sum() / (masks.sum() + 1e-8)
+    else:
+      return losses.mean()
+
 class MaskedImbalancedBCELoss(nn.Module):
   def __init__(self, pos_freq=None):
     super().__init__()
@@ -109,7 +130,7 @@ class HateModule(LightningModule):
     adapters.init(self.model)
     # self.model.add_adapter("adapter", DiReftConfig(r=8, dropout=0.1))
     # self.model.add_adapter("adapter", LoRAConfig(r=8, alpha=32))
-    self.model.add_adapter("adapter", LoReftConfig(r=8))
+    self.model.add_adapter("adapter", DiReftConfig(r=4))
     self.model.set_active_adapters("adapter")
     
     self.head_label = nn.Linear(self.model.config.hidden_size, config["num_labels"])
@@ -119,13 +140,11 @@ class HateModule(LightningModule):
     # TODO: weights / focal loss for targets and rationales
     self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.05)
     # self.bce_loss = nn.BCEWithLogitsLoss()
-    self.focal_loss = MaskedFocalLoss(alpha=0.1, gamma=2.0, epsilon=0.05)
+    # self.focal_loss = MaskedFocalLoss(alpha=0.3, gamma=2.0, epsilon=0.05)
+    self.target_loss = MultilabelImbalancedBCELoss()
     self.rationale_loss = MaskedImbalancedBCELoss()
     # log space
     self.task_weights = nn.Parameter(torch.zeros(3))
-    # self.task_temps = nn.Parameter(torch.Tensor(self.config["task_temperatures"]), requires_grad=False)
-    # self.grad_norm_weights = [v for (k,v) in self.named_parameters() if "11.reft_layer" in k]
-    # self.l0 = None
     
     self.splits = ["train", "valid", "test"]
     self.target_metrics = {split: MetricCollection({
@@ -167,6 +186,7 @@ class HateModule(LightningModule):
     # ]
 
   def on_fit_start(self):
+    self.target_loss.set_label_freq(self.trainer.datamodule.stats["target_freq"])
     self.rationale_loss.set_freq(self.trainer.datamodule.stats["rationale_freq"])
 
   def forward(self, tokens, mask):
@@ -198,7 +218,7 @@ class HateModule(LightningModule):
     hard_label = torch.argmax(label, dim=-1)
     results_label = (loss_label, pred_label, hard_label)
 
-    loss_target = self.focal_loss(logits_target, target, torch.ones_like(target))
+    loss_target = self.target_loss(logits_target, target)
     pred_target = torch.ge(logits_target, 0)
     hard_target = torch.ge(target, 0.5)
     results_target = (loss_target, pred_target, hard_target)
