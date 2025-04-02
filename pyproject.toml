@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "adapters>=1.1.0",
+    "dotenv>=0.9.9",
     "lightning[extra]>=2.5.0.post0",
     "matplotlib>=3.10.0",
     "nltk>=3.9.1",
@@ -21,6 +22,7 @@ dependencies = [
     "torchmetrics>=1.6.1",
     "tqdm>=4.67.1",
     "transformers>=4.47.1",
+    "tweepy>=4.15.0",
 ]
 
 [dependency-groups]

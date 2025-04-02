@@ -1,42 +1,27 @@
 import polars as pl
 import numpy as np
-import json
-from tqdm import tqdm
 
-from multiprocessing import Pool
-
-from torch.utils.data import TensorDataset, DataLoader, random_split
+from torch.utils.data import TensorDataset, DataLoader
 from lightning import LightningDataModule
 
-from textattack.augmentation.recipes import EasyDataAugmenter
+from textattack.augmentation import Augmenter
+from textattack.transformations import WordSwapRandomCharacterSubstitution
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 from transformers import AutoTokenizer
 
-def multi_batched_map(df, func, schema, batch_size, num_workers=1):
-  batched = df.with_columns(batch_idx=pl.int_range(0, len(df)) // batch_size) \
-    .group_by("batch_idx").agg(pl.all()) \
-    .sort("batch_idx").drop("batch_idx")
-
-  if num_workers == 1:
-    batched2 = pl.from_dicts(iter(tqdm(
-      (func(batch) for batch in batched.iter_rows(named=True)),
-      total=len(batched),
-    )), {k: pl.List(v) for k,v in schema.items()})
-  else:
-    with Pool(num_workers) as pool:
-      batched2 = pl.from_dicts(iter(tqdm(
-        pool.imap(func, batched.iter_rows(named=True)),
-        total=len(batched),
-      )), {k: pl.List(v) for k,v in schema.items()})
-
-  return pl.concat([df, batched2.explode(pl.all())], how="horizontal")
+from data_helpers import multi_batched_map
 
 class HateAugmenter:
   def __init__(self, config):
     self.config = config
     self.tokenizer = AutoTokenizer.from_pretrained(config["model"])
     self.detokenizer = TreebankWordDetokenizer()
-    self.augmenter = EasyDataAugmenter(transformations_per_example=config["num_augments"])
+
+    self.augmenter = Augmenter(
+      transformation=WordSwapRandomCharacterSubstitution(),
+      pct_words_to_swap=0.3,
+      transformations_per_example=config["num_augments"],
+    )
 
     self.df = pl.read_json("data/dataset.json")
     self.df = self.process_data(self.df)
@@ -52,7 +37,9 @@ class HateAugmenter:
     if len(set(len(r) for r in rationales)) > 1:
       return None
     else:
-      return np.mean(rationales, axis=0)
+      # TODO round?
+      # return np.mean(rationales, axis=0)
+      return np.round(np.mean(rationales, axis=0))
 
   def _augment_batch(self, batch):
     augmenteds = self.augmenter.augment_many(batch["text"])
@@ -157,7 +144,9 @@ class HateAugmenter:
       pl.col("text").first(),
       pl.col("split").first(),
       pl.col("spans").first(),
+      # pl.col("^label_.*$").cast(pl.Float32).mean().round(),
       pl.col("^label_.*$").cast(pl.Float32).mean(),
+      # pl.col("^target_.*$").cast(pl.Float32).mean().round(),
       pl.col("^target_.*$").cast(pl.Float32).mean(),
     ])
 
@@ -197,11 +186,7 @@ class HateData(LightningDataModule):
     spans = rows["spans"]
     rationales = rows["rationales"]
 
-    # print(rationales)
     rationales2 = np.zeros((len(tokens), self.config["max_length"]), dtype=np.float32)
-    # print(len(rows))
-    # print(len(rationales))
-    # print(len(spans))
 
     for i in range(len(rows["texts"])):
       for rationale, (span_start, span_end) in zip(rationales[i], spans[i]):
@@ -212,12 +197,6 @@ class HateData(LightningDataModule):
             valid = offsets[i, j, 0] != offsets[i, j, 1]
             if check_left and check_right and valid:
               rationales2[i, j] = rationale
-
-    # with np.printoptions(threshold=12838238472):
-    #   print(spans)
-    #   print(offsets)
-    #   print(rationales)
-    #   print(rationales2[:, :20])
 
     return {
       "tokens": tokens.tolist(),
@@ -246,6 +225,13 @@ class HateData(LightningDataModule):
       "target_freq": df.select(pl.col("target").arr.to_struct().struct.unnest()).mean().to_numpy()[0],
       "rationale_freq": rationale_count / mask_count,
     }
+
+    print("target stats breakdown:")
+    for i, target in enumerate(self.config["targets"]):
+      print(f"  {target}: {self.stats['target_freq'][i]}")
+    print(f"label_freq: {self.stats['label_freq']}")
+    print(f"rationale_freq: {self.stats['rationale_freq']}")
+
     # df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"), pl.col("split").first())
 
     if stage == "visualize":

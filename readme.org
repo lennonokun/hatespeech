@@ -17,6 +17,11 @@
 
 - rationales mask including not classifying invalid tokens
 
+- targets learn so much slower
+- targets separate tasks much better?
+- probably separate heads bc they might conflict
+- 
+  
 * datasets
 
 - hatexplain

@@ -1,6 +1,7 @@
 import os
 import warnings
 import argparse
+from dotenv import load_dotenv
 
 import torch
 from lightning import Trainer
@@ -20,7 +21,7 @@ def do_train(config):
   
   trainer = Trainer(
     enable_checkpointing=True,
-    max_epochs=100,
+    max_epochs=30,
     # limit_train_batches=0.5,
     # limit_val_batches=0.2,
     accelerator="auto",
@@ -29,13 +30,32 @@ def do_train(config):
     logger=TensorBoardLogger("tb_logs", name="hatexplain"),
     devices=1,
     callbacks=[
-      EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
+      # EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
+      EarlyStopping(monitor="valid_loss", min_delta=0.1, patience=config["patience"], verbose=True),
     ],
   )
   # trainer.logger.log_hyperparams(config)
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
+def do_test(config):
+  data = HateData(config)
+  module = HateModule.load_from_checkpoint(
+    config["best_model"],
+    map_location=torch.device("cuda"),
+  )
+  trainer = Trainer(
+    accelerator="auto",
+    precision="bf16-mixed",
+    devices=1,
+  )
+
+  trainer.test(module, datamodule=data)
+
+def do_load(config):
+  data = HateData(config)
+  data.setup("")
+  
 def do_augment(config):
   augmenter = HateAugmenter(config)
 
@@ -49,6 +69,7 @@ if __name__ == "__main__":
   parser.add_argument("mode", type=str)
   args = parser.parse_args()
 
+  load_dotenv()
   os.environ["TOKENIZERS_PARALLELISM"] = "false"
   torch.set_float32_matmul_precision("medium")
   warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
@@ -56,22 +77,25 @@ if __name__ == "__main__":
 
   config = {
     "model": "google/electra-small-discriminator",
-    "best_model": "tb_logs/hatexplain/version_6/checkpoints/epoch=13-step=1764.ckpt",
+    "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
     "targets": [
-      "African", "Arab", "Asexual", "Asian", "Bisexual",
-      "Buddhism", "Caucasian", "Christian", "Disability",
-      "Economic", "Heterosexual", "Hindu", "Hispanic",
-      "Homosexual", "Indian", "Indigenous", "Islam",
-      "Jewish", "Men", "Minority", # "None",
-      "Nonreligious", "Other", "Refugee", "Women"
-    ], "targets_ignore": ["None"],
+      "African", "Arab", "Asian", "Caucasian",
+      "Hispanic", "Homosexual", "Islam", "Jewish",
+      "Other", "Refugee", "Women"
+    # ignored bc frequency threshold 0.005 or None
+    ], "targets_ignore": [
+      "None", "Asexual", "Bisexual", "Disability",
+      "Economic", "Heterosexual", "Hindu", "Indian",
+      "Indigenous", "Men", "Minority", "Nonreligious", 
+    ],
     "labels": ["hatespeech", "normal"],
-    "num_targets": 24,
+    "multitask_targets": True,
+    "num_targets": 11,
     "num_labels": 2,
     "num_annotators": 3,
-    "num_augments": 5,
+    "num_augments": 3,
     "num_tasks": 3,
-    "do_augment": False,
+    "do_augment": True,
     "augmented_path": "data/augmented.parquet",
     "augment_batch_size": 32,
     "augment_num_workers": 5,
@@ -80,12 +104,19 @@ if __name__ == "__main__":
     "max_length": 128,
     "batch_size": 128,
     "learning_rate": 5e-5,
-    "patience": 4,
+    "patience": 3,
+    "env_file": ".env",
   }
 
-  if args.mode == "train":
-    do_train(config)
-  elif args.mode == "augment":
-    do_augment(config)
-  elif args.mode == "visualize":
-    do_visualize(config)
+  mode_methods = {
+    "train": do_train,
+    "augment": do_augment,
+    "visualize": do_visualize,
+    "test": do_test,
+    "load": do_load,
+  }
+
+  if current_method := mode_methods.get(args.mode):
+    current_method(config)
+  else:
+    print(f"Invalid mode '{args.mode}'")
