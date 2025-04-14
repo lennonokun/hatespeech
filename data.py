@@ -23,9 +23,8 @@ class HateAugmenter:
       transformations_per_example=config["num_augments"],
     )
 
-    self.df = pl.read_json("data/dataset.json")
+    self.df = pl.read_json(self.config["dataset_path"])
     self.df = self.process_data(self.df)
-    print(self.df)
     self.df = self.augment(self.df)
     self.df.write_parquet(self.config["augmented_path"])
 
@@ -37,9 +36,7 @@ class HateAugmenter:
     if len(set(len(r) for r in rationales)) > 1:
       return None
     else:
-      # TODO round?
-      # return np.mean(rationales, axis=0)
-      return np.round(np.mean(rationales, axis=0))
+      return np.mean(rationales, axis=0)
 
   def _augment_batch(self, batch):
     augmenteds = self.augmenter.augment_many(batch["text"])
@@ -122,7 +119,7 @@ class HateAugmenter:
       .unnest("annotators")
 
     # remove offensive
-    df = df.with_columns(pl.col("label").cast(pl.String).replace("offensive", "normal").cast(pl.Categorical))
+    # df = df.with_columns(pl.col("label").cast(pl.String).replace("offensive", "normal").cast(pl.Categorical))
 
     # make label and target one-hot
     df_target = df.with_columns(pl.lit(1).alias("one")) \
@@ -144,9 +141,7 @@ class HateAugmenter:
       pl.col("text").first(),
       pl.col("split").first(),
       pl.col("spans").first(),
-      # pl.col("^label_.*$").cast(pl.Float32).mean().round(),
       pl.col("^label_.*$").cast(pl.Float32).mean(),
-      # pl.col("^target_.*$").cast(pl.Float32).mean().round(),
       pl.col("^target_.*$").cast(pl.Float32).mean(),
     ])
 
@@ -216,13 +211,18 @@ class HateData(LightningDataModule):
         "offsets": pl.Array(pl.Array(pl.Int64, 2), self.config["max_length"]),
       },
       self.config["tokenize_batch_size"],
-    ).drop("rationales").rename({"rationales2": "rationales"})
+      drop_cols=["rationales"],
+    )
 
     rationale_count = df.select(pl.col("rationales").arr.sum()).sum().item()
     mask_count = df.select(pl.col("mask").arr.sum()).sum().item()
     self.stats = {
-      "label_freq": df.select(pl.col("label").arr.to_struct().struct.unnest()).mean().to_numpy()[0],
-      "target_freq": df.select(pl.col("target").arr.to_struct().struct.unnest()).mean().to_numpy()[0],
+      "label_freq": df.select(
+        pl.col("label").arr.to_struct().struct.unnest()
+      ).mean().to_numpy()[0],
+      "target_freq": df.select(
+        pl.col("target").arr.to_struct().struct.unnest()
+      ).mean().to_numpy()[0],
       "rationale_freq": rationale_count / mask_count,
     }
 
@@ -234,13 +234,22 @@ class HateData(LightningDataModule):
 
     # df = df.group_by("post_id").agg(pl.col("tokens", "mask", "label"), pl.col("split").first())
 
+    # round selected columns
+    round_exprs = {
+      "label": pl.col("label").round(),
+      "target": pl.col("target").arr.eval(pl.element().round()),
+      "rationales": pl.col("rationales").arr.eval(pl.element().round()),
+    }
+    round_args = [round_exprs[col] for col in self.config["round_train"]]
+    df = df.select(pl.all(), *round_args)
+
     if stage == "visualize":
       self.df = df
     else:
       self.datasets = {}
+      features = ["tokens", "mask", "label", "target", "rationales"]
       for split in ["train", "valid", "test"]:
         # df_split = df.filter(pl.col("split") == split).filter(pl.col("tokens").list.len() == num_augments).select(
-        features = ["tokens", "mask", "label", "target", "rationales"]
         df_split = df.filter(pl.col("split") == split).select(features)
         self.datasets[split] = TensorDataset(*[df_split[feature].to_torch() for feature in features])
 
