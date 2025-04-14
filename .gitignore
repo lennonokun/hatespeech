@@ -15,3 +15,7 @@ uv.lock
 .python-version
 uv.lock
 lightning_logs/
+.direnv/
+.envrc
+data/
+tb_logs/
