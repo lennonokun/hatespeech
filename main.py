@@ -10,19 +10,20 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 from datasets.utils.logging import disable_progress_bar
 
-from data import HateData, HateAugmenter
+from preprocess import do_fix, HatePreprocessor
+from datamodule import HateDatamodule
 from module import HateModule
 from visualize import HateVisualizer
 
 def do_train(config):
   torch.cuda.empty_cache()
-  data = HateData(config)
+  data = HateDatamodule(config)
   module = HateModule(config)
   
   trainer = Trainer(
     enable_checkpointing=True,
     max_epochs=30,
-    # limit_train_batches=0.5,
+    # limit_train_batches=0.2,
     # limit_val_batches=0.2,
     accelerator="auto",
     # gradient_clip_val=5.0,
@@ -31,15 +32,14 @@ def do_train(config):
     devices=1,
     callbacks=[
       # EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
-      EarlyStopping(monitor="valid_loss", min_delta=0.1, patience=config["patience"], verbose=True),
+      EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
     ],
   )
-  # trainer.logger.log_hyperparams(config)
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
 def do_test(config):
-  data = HateData(config)
+  data = HateDatamodule(config)
   module = HateModule.load_from_checkpoint(
     config["best_model"],
     map_location=torch.device("cuda"),
@@ -53,12 +53,15 @@ def do_test(config):
   trainer.test(module, datamodule=data)
 
 def do_load(config):
-  data = HateData(config)
+  data = HateDatamodule(config)
   data.setup("")
-  
-def do_augment(config):
-  augmenter = HateAugmenter(config)
 
+def do_preprocess(config):
+  preprocessor = HatePreprocessor(config)
+  preprocessor.preprocess()
+  # preprocessor.load_prev_test()
+  preprocessor.write()
+  
 def do_visualize(config):
   visualizer = HateVisualizer(config)
   visualizer.visualize_dataset()
@@ -70,50 +73,57 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   load_dotenv()
-  os.environ["TOKENIZERS_PARALLELISM"] = "false"
+  # os.environ["TOKENIZERS_PARALLELISM"] = "false"
   torch.set_float32_matmul_precision("medium")
   warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
   disable_progress_bar()
 
   config = {
     "model": "google/electra-small-discriminator",
+    # "model": "vinai/bertweet-base",
     "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
     "targets": [
       "African", "Arab", "Asian", "Caucasian",
       "Hispanic", "Homosexual", "Islam", "Jewish",
       "Other", "Refugee", "Women"
-    # ignored bc frequency threshold 0.005 or None
-    ], "targets_ignore": [
-      "None", "Asexual", "Bisexual", "Disability",
-      "Economic", "Heterosexual", "Hindu", "Indian",
-      "Indigenous", "Men", "Minority", "Nonreligious", 
     ],
-    "labels": ["hatespeech", "normal"],
+    "labels": ["hatespeech", "offensive", "normal"],
     "multitask_targets": True,
     "num_targets": 11,
-    "num_labels": 2,
+    "num_labels": 3,
     "num_annotators": 3,
-    "num_augments": 3,
+    "round_train": ["target", "label", "rationale"],
     "num_tasks": 3,
-    "do_augment": True,
-    "augmented_path": "data/augmented.parquet",
-    "augment_batch_size": 32,
-    "augment_num_workers": 5,
+    # "num_augments": 3,
+    # "do_augment": False,
+    # "augmented_path": "data/augmented.parquet",
+    "dirty_dataset_path": "data/dataset.json",
+    "clean_dataset_path": "data/dataset_clean.json",
+    "preprocessed_dataset_paths": {
+      "train": "data/dataset_train.parquet",
+      "valid": "data/dataset_valid.parquet",
+      "test": "data/dataset_test.parquet",
+    },
+    "stats_path": "data/stats.json",
     "logging": "terminal",
+    # "augment_batch_size": 32,
+    # "augment_num_workers": 5,
     "tokenize_batch_size": 64,
     "max_length": 128,
     "batch_size": 128,
     "learning_rate": 5e-5,
+    "vat_epsilon": 0.6,
+    "mtl_norm_initial": True,
+    "mtl_norm_length": 10,
     "patience": 3,
-    "env_file": ".env",
   }
 
   mode_methods = {
+    "fix": do_fix,
+    "preprocess": do_preprocess,
     "train": do_train,
-    "augment": do_augment,
-    "visualize": do_visualize,
-    "test": do_test,
     "load": do_load,
+    "visualize": do_visualize,
   }
 
   if current_method := mode_methods.get(args.mode):

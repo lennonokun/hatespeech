@@ -21,6 +21,15 @@
 - targets separate tasks much better?
 - probably separate heads bc they might conflict
 - 
+
+- current task regularization not that bad, but confusing and probably
+  not correct
+- look up how to actually do it properly, maybe normalize with
+  gradients instead?
+
+* papers
+  - https://bit.kuas.edu.tw/~jni/2024/vol9/s1/36.JNI-S-2023-08-006.pdf
+  - https://arxiv.org/pdf/1806.08028
   
 * datasets
 
@@ -47,7 +56,25 @@
   - proportion abusive: 0.07
   - racism/sexism specific
 
-* best
+* results
+
+** rolling mean normalization + uncertainty weighing + gradient adversarial training
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │    0.5586057305335999     │
+│     test_rationale_f1     │    0.7104283571243286     │
+│      test_target_f1       │    0.6882563233375549     │
+└───────────────────────────┴───────────────────────────┘
+
+** initial n=10 normalization + uncertainty weighing + gradient adversarial training
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │    0.5440879464149475     │
+│     test_rationale_f1     │    0.6091033816337585     │
+│      test_target_f1       │    0.6695500612258911     │
+└───────────────────────────┴───────────────────────────┘
 
 with offensive
 - test label macro acc: 0.665

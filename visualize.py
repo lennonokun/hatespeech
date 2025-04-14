@@ -1,11 +1,10 @@
 import torch
 import numpy as np
-import polars as pl
 
 from transformers import AutoTokenizer
 
 from module import HateModule
-from data import HateData
+from datamodule import HateDatamodule
 
 class HateVisualizer():
   def __init__(self, config):
@@ -16,7 +15,7 @@ class HateVisualizer():
       map_location=torch.device("cuda"),
     )
     self.module.eval()
-    self.datamodule = HateData(config)
+    self.datamodule = HateDatamodule(config)
     self.datamodule.setup("visualize")
   
   def tokenize(self, texts):
