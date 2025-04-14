@@ -32,7 +32,7 @@ def do_train(config):
     devices=1,
     callbacks=[
       # EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
-      EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
+      # EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
     ],
   )
   trainer.fit(module, datamodule=data)
@@ -110,11 +110,13 @@ if __name__ == "__main__":
     # "augment_num_workers": 5,
     "tokenize_batch_size": 64,
     "max_length": 128,
-    "batch_size": 128,
+    "batch_size": 142,
     "learning_rate": 5e-5,
     "vat_epsilon": 0.6,
     "mtl_norm_initial": True,
     "mtl_norm_length": 10,
+    "mtl_weighing": "dwa",
+    "mtl_dwa_T": 2.0,
     "patience": 3,
   }
 

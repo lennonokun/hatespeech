@@ -59,7 +59,7 @@ class HateModule(LightningModule):
     # TODO differentiate num_tasks?
     if cfg["multitask_targets"]:
       self.num_tasks = cfg["num_targets"] + cfg["num_tasks"] - 1
-      target_importances = 1e0 * np.ones(cfg["num_targets"]) / cfg["num_targets"]
+      target_importances = 5e0 * np.ones(cfg["num_targets"]) / cfg["num_targets"]
       task_importances = np.concatenate(([1], target_importances, [1]), axis=0)
     else:
       self.num_tasks = cfg["num_tasks"]
@@ -67,7 +67,11 @@ class HateModule(LightningModule):
     task_importances /= self.num_tasks
 
     self.task_importances = torch.Tensor(task_importances).cuda()
-    self.task_weights = nn.Parameter(torch.zeros(self.num_tasks)) # log space
+    if cfg["mtl_weighing"] == "uw":
+      self.task_weights = nn.Parameter(torch.zeros(self.num_tasks)) # log space
+    elif cfg["mtl_weighing"] == "dwa":
+      self.task_weights = torch.ones(self.num_tasks, requires_grad=False)
+
     self.loss_history = []
     self.task_norm = None
     
@@ -113,10 +117,10 @@ class HateModule(LightningModule):
    
   def configure_optimizers(self):
     std_params = filter(lambda p: p is not self.task_weights and p.requires_grad, self.parameters())
-    return AdamW([
-      {"params": std_params, "lr": self.cfg["learning_rate"]},
-      {"params": [self.task_weights], "lr": self.cfg["learning_rate"] * 10},
-    ])
+    arg = [{"params": std_params, "lr": self.cfg["learning_rate"]}]
+    if self.cfg["mtl_weighing"] == "uw":
+      arg.append({"params": [self.task_weights], "lr": self.cfg["learning_rate"] * 10})
+    return AdamW(arg)
 
   def on_fit_start(self):
     self.label_loss.set_freq(self.trainer.datamodule.stats["label_freqs"]) # pyright: ignore[reportAttributeAccessIssue]
@@ -166,12 +170,28 @@ class HateModule(LightningModule):
           mean_losses = torch.mean(torch.stack(self.loss_history), dim=0) 
           self.task_norm = 1 / (mean_losses + 1e-8)
 
-    if self.task_norm is not None:
-      losses *= self.task_norm
-    losses *= self.task_importances
-        
-    loss = 0.5 * (losses / (self.task_weights.exp() ** 2)).sum() + self.task_weights.sum()
-    return loss, loss_label, loss_target, loss_rationale
+    if self.cfg["mtl_weighing"] == "uw":
+      if self.task_norm is not None:
+        losses *= self.task_norm
+      losses *= self.task_importances
+      loss = 0.5 * (losses / (self.task_weights.exp() ** 2)).sum() + self.task_weights.sum()
+      return loss
+    elif self.cfg["mtl_weighing"] == "dwa":
+      if len(self.loss_history) == 2:
+        ratios = self.loss_history[0] / (self.loss_history[1] + 1e-8)
+      else:
+        ratios = torch.ones(self.num_tasks).cuda()
+
+      loss = losses @ (F.softmax(ratios / self.cfg["mtl_dwa_T"], dim=0) * self.task_importances)
+      if len(self.loss_history) == 2:
+        self.loss_history.pop(0)
+      self.loss_history.append(losses.detach())
+
+      return loss
+    else:
+      return losses.sum()
+    # TODO return all results
+   
   
   def compute(self, embeddings, mask, annotations, virtual=False):
     label, target, rationale = annotations
@@ -193,16 +213,16 @@ class HateModule(LightningModule):
     loss_label = self.label_loss(logits_label, label)
     loss_target = self.target_loss(logits_target, target)
     loss_rationale = self.rationale_loss(logits_rationale, rationale, mask_rationale)
-    results_loss = self.mtl_loss(loss_label, loss_target, loss_rationale, virtual)
+    loss = self.mtl_loss(loss_label, loss_target, loss_rationale, virtual)
     
-    return results_label, results_target, results_rationale, results_loss
+    return results_label, results_target, results_rationale, loss
     
   def virtual_adversary(self, tokens, mask, annotations):
     embeddings = self.model.embeddings(tokens)
     embeddings.requires_grad_(True)
 
     results = self.compute(embeddings, mask, annotations, virtual=True)
-    loss = results[-1][0]
+    loss = results[-1]
 
     grad = torch.autograd.grad(loss, embeddings)[0].detach()
     coef = self.cfg["vat_epsilon"] * (1 - F.sigmoid(grad))
@@ -215,14 +235,13 @@ class HateModule(LightningModule):
     tokens, mask, label, target, rationale = batch
     annotations = (label, target, rationale)
 
-    if split == "train":
-      embeddings = self.virtual_adversary(tokens, mask, annotations)
-    else:
-      embeddings = self.get_embeddings(tokens)
+    # if split == "train":
+    #   embeddings = self.virtual_adversary(tokens, mask, annotations)
+    # else:
+    embeddings = self.get_embeddings(tokens)
 
     results = self.compute(embeddings, mask, annotations)
-    results_label, results_target, results_rationale, results_loss = results
-    loss = results_loss[0]
+    results_label, results_target, results_rationale, loss = results
     # print(torch.autograd.grad(loss, embeddings, retain_graph=True, create_graph=True)[0])
 
     label_metrics = self.label_metrics[split](*results_label)

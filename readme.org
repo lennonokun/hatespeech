@@ -20,12 +20,8 @@
 - targets learn so much slower
 - targets separate tasks much better?
 - probably separate heads bc they might conflict
-- 
 
-- current task regularization not that bad, but confusing and probably
-  not correct
-- look up how to actually do it properly, maybe normalize with
-  gradients instead?
+- stopping callback based on multiple metrics?
 
 * papers
   - https://bit.kuas.edu.tw/~jni/2024/vol9/s1/36.JNI-S-2023-08-006.pdf
@@ -55,10 +51,12 @@
     https://www.kaggle.com/arkhoshghalb/twitter-sentiment-analysis-hatred-speech
   - proportion abusive: 0.07
   - racism/sexism specific
+- measuring hate speech
+  - https://huggingface.co/datasets/ucberkeley-dlab/measuring-hate-speech
 
 * results
 
-** rolling mean normalization + uncertainty weighing + gradient adversarial training
+** rolling n=10 normalization + uncertainty weighing + gradient adversarial training
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃        Test metric        ┃       DataLoader 0        ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -76,15 +74,20 @@
 │      test_target_f1       │    0.6695500612258911     │
 └───────────────────────────┴───────────────────────────┘
 
-with offensive
-- test label macro acc: 0.665
-- test label macro f1: 0.641
-- test target macro acc: 0.614
+** DWA (T=2) + GAT (eps=0.6)
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │    0.5409799814224243     │
+│     test_rationale_f1     │    0.6714811325073242     │
+│      test_target_f1       │    0.6392104625701904     │
+└───────────────────────────┴───────────────────────────┘
 
-without offensive:
-- test label macro acc: 0.784
-- test label macro f1: 0.790
-- test rationale macro acc: 0.983
-- test rationale macro f1: 0.496
-- test target macro acc: 0.961
-- test target macro f1: 0.065
+** DWA (T=2) + 30 epochs
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │    0.5729119777679443     │
+│     test_rationale_f1     │    0.7984278202056885     │
+│      test_target_f1       │     0.704976499080658     │
+└───────────────────────────┴───────────────────────────┘
