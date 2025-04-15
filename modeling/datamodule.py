@@ -1,39 +1,86 @@
+from typing import *
+
 import numpy as np
 import json
 from lightning import LightningDataModule
 
-import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.sampler import BatchSampler, RandomSampler
 import pyarrow.parquet as pq
 
-# not scalable, but the dataset is small enough
+# batch sampled
+class CombinedDataset(Dataset):
+  def __init__(self, *datasets):
+    self.datasets = datasets
+
+    lengths = np.array([len(dataset) for dataset in datasets])
+    self.length = np.sum(lengths)
+    self.offsets = np.cumsum(lengths) - lengths
+    self.groups = np.arange(len(datasets))
+
+  def __len__(self):
+    return self.length
+
+  def __getitem__(self, idx):
+    idx = np.array(idx)
+
+    diffs = idx[:, None] - self.offsets[None, :]
+    buckets = (len(self.datasets) - 1) - np.argmax(diffs[:, ::-1] >= 0, axis=1)
+    groups_idx = [np.where(buckets == val)[0] for val in self.groups]
+    return [
+      self.datasets[dataset_idx][diffs[group_idx, dataset_idx]]
+      for dataset_idx, group_idx in enumerate(groups_idx)
+    ]
+  
+# batch sampled
 class HateDataset(Dataset):
-  def __init__(self, config: dict, file_path: str):
+  def __init__(self, config: dict, name: str, split: str, multis: List[str], unis: List[str]):
     self.config = config
-    self.df = pq.ParquetDataset(file_path).read().to_pandas()
-    self.label_cols = [f"label_{name}" for name in self.config["labels"]]
+    
+    path = self.config["output_dataset_path"].format(name=name, split=split)
+    self.df = pq.ParquetDataset(path).read().to_pandas()
+
+    self.locs = {}
+    for var in multis:
+      # TODO: change pattern
+      cats = self.config[f"{var}s"]
+      self.locs[var] = [self.df.columns.get_loc(f"{var}_{cat}") for cat in cats]
+    for var in unis:
+      self.locs[var] = self.df.columns.get_loc(var)
 
   def __len__(self):
     return len(self.df)
 
   def __getitem__(self, idx):
-    row = self.df.iloc[idx]
-
-    label = np.array(row[self.label_cols], dtype=np.float32)
-
-    target = np.zeros(self.config["num_targets"], dtype=np.float32)
-    for (pos, val) in row["target"]:
-      target[pos] = val
-
-    tokens = np.array(row["tokens"], dtype=np.int32)
-
-    mask = np.zeros(self.config["max_length"], dtype=np.bool_)
-    for (start, end) in row["mask"]:
-      mask[start: end] = True
+    raise NotImplementedError
     
-    rationale = np.zeros(self.config["max_length"], dtype=np.float32)
-    for (pos, val) in row["rationale"]:
-      rationale[pos] = val
+class ExplainDataset(HateDataset):
+  def __init__(self, config: dict, split: str):
+    multis = ["label", "target"]
+    unis = ["tokens", "mask", "rationale"]
+    super().__init__(config, "explain", split, multis, unis)
+
+  def __getitem__(self, idx):
+    num_idx = len(idx)
+    if num_idx == 0:
+      return {}
+    
+    label = np.array(self.df.iloc[idx, self.locs["label"]], dtype=np.float32)
+    target = np.array(self.df.iloc[idx, self.locs["target"]], dtype=np.float32)
+
+    tokens_list = self.df.iloc[idx, self.locs["tokens"]]
+    max_len = max(len(tokens) for tokens in tokens_list)
+
+    tokens = np.zeros((num_idx, max_len), dtype=np.int32)
+    mask = np.zeros((num_idx, max_len), dtype=np.bool_)
+    rationale = np.zeros((num_idx, max_len), dtype=np.float32)
+    for batch, i in enumerate(idx):
+      length = len(self.df.iat[i, self.locs["tokens"]])
+      tokens[batch, :length] = self.df.iat[i, self.locs["tokens"]]
+      for pos, val in self.df.iat[i, self.locs["rationale"]]:
+        rationale[batch, pos] = val
+      for start, end in self.df.iat[i, self.locs["mask"]]:
+        mask[batch, start: end] = True
 
     return {
       "tokens": tokens,
@@ -41,6 +88,36 @@ class HateDataset(Dataset):
       "label": label,
       "target": target,
       "rationale": rationale,
+    }
+
+class MeasuringDataset(HateDataset):
+  def __init__(self, config: dict, split: str):
+    multis = []
+    unis = ["score", "tokens", "mask"]
+    super().__init__(config, "measuring", split, multis, unis)
+    
+  def __getitem__(self, idx):
+    num_idx = len(idx)
+    if num_idx == 0:
+      return {}
+    
+    score = np.array(self.df.iloc[idx, self.locs["score"]], dtype=np.float32)
+
+    tokens_list = self.df.iloc[idx, self.locs["tokens"]]
+    max_len = max(len(tokens) for tokens in tokens_list)
+
+    tokens = np.zeros((num_idx, max_len), dtype=np.int32)
+    mask = np.zeros((num_idx, max_len), dtype=np.bool_)
+    for batch, i in enumerate(idx):
+      length = len(self.df.iat[i, self.locs["tokens"]])
+      tokens[batch, :length] = self.df.iat[i, self.locs["tokens"]]
+      for start, end in self.df.iat[i, self.locs["mask"]]:
+        mask[batch, start: end] = True
+
+    return {
+      "score": score,
+      "tokens": tokens,
+      "mask": mask,
     }
 
 class HateDatamodule(LightningDataModule):
@@ -53,41 +130,25 @@ class HateDatamodule(LightningDataModule):
     self.stats = json.load(open(path, "r"))
 
     self.datasets = {}
+    self.samplers = {}
     for split in ["train", "valid", "test"]:
-      path = self.config["output_dataset_path"].format(name="explain", split=split)
-      self.datasets[split] = HateDataset(self.config, path)
-
-  def _collate_fn(self, samples):
-    max_length = max(len(sample["tokens"]) for sample in samples)
-
-    tokens_batch = np.zeros((len(samples), max_length), dtype=np.int32)
-    for i, sample in enumerate(samples):
-      tokens_batch[i, :len(sample["tokens"])] = sample["tokens"]
-    
-    mask_batch = np.vstack(tuple(sample["mask"] for sample in samples))
-    rationale_batch = np.vstack(tuple(sample["rationale"] for sample in samples))
-    mask_batch = mask_batch[:, :max_length]
-    rationale_batch = rationale_batch[:, :max_length]
-
-    label_batch = np.vstack(tuple(sample["label"] for sample in samples))
-    target_batch = np.vstack(tuple(sample["target"] for sample in samples))
-
-    return (
-      torch.IntTensor(tokens_batch),
-      torch.BoolTensor(mask_batch),
-      torch.FloatTensor(label_batch),
-      torch.FloatTensor(target_batch),
-      torch.FloatTensor(rationale_batch),
-    )
+      self.datasets[split] = CombinedDataset(
+        ExplainDataset(self.config, split),
+        MeasuringDataset(self.config, split),
+      )
+      self.samplers[split] = BatchSampler(
+        RandomSampler(self.datasets[split]),
+        batch_size=self.config["batch_size"],
+        drop_last=False
+      )
 
   def _get_dataloader(self, split: str):
-    # return DataLoader(self.datasets[split])
     return DataLoader(
       self.datasets[split],
-      batch_size=self.config["batch_size"],
+      sampler=self.samplers[split],
+      batch_size=None,
       num_workers=4,
       pin_memory=True,
-      collate_fn=self._collate_fn,
     )
 
   def train_dataloader(self):

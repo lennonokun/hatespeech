@@ -232,15 +232,16 @@ class HateModule(LightningModule):
     return (embeddings + perturbation).detach()
   
   def compute_step(self, batch, split):
-    tokens, mask, label, target, rationale = batch
-    annotations = (label, target, rationale)
+    batch1, batch2 = batch
+    annotations = (batch1["label"], batch1["target"], batch1["rationale"])
 
     # if split == "train":
     #   embeddings = self.virtual_adversary(tokens, mask, annotations)
     # else:
-    embeddings = self.get_embeddings(tokens)
+    batch1_size = batch1["label"].shape[0]
+    embeddings = self.get_embeddings(batch1["tokens"])
 
-    results = self.compute(embeddings, mask, annotations)
+    results = self.compute(embeddings, batch1["mask"], annotations)
     results_label, results_target, results_rationale, loss = results
     # print(torch.autograd.grad(loss, embeddings, retain_graph=True, create_graph=True)[0])
 
@@ -255,18 +256,18 @@ class HateModule(LightningModule):
 
     # TODO for now dont clog up terminal
     if split != "train":
-      self.log_dict(target_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
-      self.log_dict(label_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
-      self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, on_step=log_metrics_on_step)
+      self.log_dict(target_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
+      self.log_dict(label_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
+      self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
 
     if split == "train":
-      self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
+      self.log("train_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_loss_on_step)
       # self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       return loss
     elif split == "valid":
-      self.log("valid_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
+      self.log("valid_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=False)
       # self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)

@@ -1,27 +1,28 @@
 * todo
 
-- augmentation with constraints to not modify reasonings
-- multiple datasets?
-- augmentation training method?
-  - randomized vs total?
-  - if randomized, custom dataloader
-- try label smoothing?
-- make offensive label just normal to focus on hatespeech?
-- attention mechanism with rationales?
+** short-term
+- CombinedDataset should group tokens + mask together, just separate features
+- get multi dataset learning working
+- separate data loading into its own module
+- abstract multi dataset model
+- abstract multi task model
+- update readme papers + datasets
+- stopping callback based on multiple metrics?
 
+** medium-term
+- branching adapters
+- try more virtual adversarial training
+- try label smoothing?
+- attention mechanism with rationales?
+- rationales mask including not classifying invalid tokens
+
+** long term
+- text augmentation
 - use hatebase for lexicon features
 - dataset combination
   - include dataset origin as input?
   - ^ could fuzzify it so that it works for general also
   - ^ could use TaBERT or use as input in classification head
-
-- rationales mask including not classifying invalid tokens
-
-- targets learn so much slower
-- targets separate tasks much better?
-- probably separate heads bc they might conflict
-
-- stopping callback based on multiple metrics?
 
 * papers
   - https://bit.kuas.edu.tw/~jni/2024/vol9/s1/36.JNI-S-2023-08-006.pdf
