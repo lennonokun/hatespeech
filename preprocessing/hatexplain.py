@@ -5,10 +5,11 @@ import pandas as pd
 from pyspark import SparkContext
 from pyspark.sql import functions as F, types as T
 
-import data_helpers as help
 from typing import *
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 from transformers import AutoTokenizer
+
+from . import helpers as help
 
 # fix bad nested format
 def do_fix(config):

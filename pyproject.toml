@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "accelerate>=1.6.0",
     "adapters>=1.1.0",
     "lightning[extra]>=2.5.0.post0",
     "nltk>=3.9.1",

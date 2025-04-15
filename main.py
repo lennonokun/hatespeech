@@ -1,7 +1,6 @@
 import os
 import warnings
 import argparse
-from dotenv import load_dotenv
 
 import torch
 from lightning import Trainer
@@ -9,10 +8,8 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
-from preprocess import do_fix, HatePreprocessor
-from datamodule import HateDatamodule
-from module import HateModule
-from visualize import HateVisualizer
+from preprocessing import do_fix, HatePreprocessor
+from modeling import HateDatamodule, HateModule, HateVisualizer
 
 def do_train(config):
   torch.cuda.empty_cache()
@@ -30,7 +27,6 @@ def do_train(config):
     logger=TensorBoardLogger("tb_logs", name="hatexplain"),
     devices=1,
     callbacks=[
-      # EarlyStopping(monitor="valid_label_f1", min_delta=0.01, patience=config["patience"], mode="max", verbose=True),
       # EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
     ],
   )
@@ -71,7 +67,6 @@ if __name__ == "__main__":
   parser.add_argument("mode", type=str)
   args = parser.parse_args()
 
-  load_dotenv()
   # os.environ["TOKENIZERS_PARALLELISM"] = "false"
   torch.set_float32_matmul_precision("medium")
   warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)

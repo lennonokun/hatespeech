@@ -14,7 +14,7 @@ import adapters
 from adapters import DiReftConfig
 from transformers import AutoModel 
 
-from custom import MaskedBinaryAccuracy, MaskedBinaryF1, MyBCELoss
+from .custom import MaskedBinaryAccuracy, MaskedBinaryF1, MyBCELoss
 
 class HateModule(LightningModule):
   def __init__(self, cfg):
