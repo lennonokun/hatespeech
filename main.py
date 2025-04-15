@@ -8,7 +8,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
-from preprocessing import do_fix, HatePreprocessor
+from preprocessing import do_fix, ExplainPreprocessor, MeasuringPreprocessor
 from modeling import HateDatamodule, HateModule, HateVisualizer
 
 def do_train(config):
@@ -52,10 +52,12 @@ def do_load(config):
   data.setup("")
 
 def do_preprocess(config):
-  preprocessor = HatePreprocessor(config)
-  preprocessor.preprocess()
-  # preprocessor.load_prev_test()
-  preprocessor.write()
+  preprocessor = ExplainPreprocessor(config)
+  preprocessor.execute()
+
+def do_preprocess2(config):
+  preprocessor = MeasuringPreprocessor(config)
+  preprocessor.execute()
   
 def do_visualize(config):
   visualizer = HateVisualizer(config)
@@ -87,20 +89,11 @@ if __name__ == "__main__":
     "num_annotators": 3,
     "round_train": ["target", "label", "rationale"],
     "num_tasks": 3,
-    # "num_augments": 3,
-    # "do_augment": False,
-    # "augmented_path": "data/augmented.parquet",
-    "dirty_dataset_path": "data/dataset.json",
-    "clean_dataset_path": "data/dataset_clean.json",
-    "preprocessed_dataset_paths": {
-      "train": "data/dataset_train.parquet",
-      "valid": "data/dataset_valid.parquet",
-      "test": "data/dataset_test.parquet",
-    },
-    "stats_path": "data/stats.json",
+    "explain_dirty_path": "data/explain/dirty.json",
+    "input_dataset_path": "data/{name}/input.parquet",
+    "output_dataset_path": "data/{name}/output_{split}.parquet",
+    "output_stats_path": "data/{name}/stats.json",
     "logging": "terminal",
-    # "augment_batch_size": 32,
-    # "augment_num_workers": 5,
     "tokenize_batch_size": 64,
     "max_length": 128,
     "batch_size": 142,
@@ -116,6 +109,7 @@ if __name__ == "__main__":
   mode_methods = {
     "fix": do_fix,
     "preprocess": do_preprocess,
+    "preprocess2": do_preprocess2,
     "train": do_train,
     "load": do_load,
     "visualize": do_visualize,

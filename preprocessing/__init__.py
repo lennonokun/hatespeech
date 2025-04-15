@@ -1,1 +1,2 @@
-from .hatexplain import do_fix, HatePreprocessor
+from .explain import do_fix, ExplainPreprocessor
+from .measuring import MeasuringPreprocessor

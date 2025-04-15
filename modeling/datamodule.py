@@ -49,11 +49,13 @@ class HateDatamodule(LightningDataModule):
     self.config = config
 
   def setup(self, stage: str):
-    self.stats = json.load(open(self.config["stats_path"], "r"))
+    path = self.config["output_stats_path"].format(name="explain")
+    self.stats = json.load(open(path, "r"))
+
     self.datasets = {}
     for split in ["train", "valid", "test"]:
-      file_path = self.config["preprocessed_dataset_paths"][split]
-      self.datasets[split] = HateDataset(self.config, file_path)
+      path = self.config["output_dataset_path"].format(name="explain", split=split)
+      self.datasets[split] = HateDataset(self.config, path)
 
   def _collate_fn(self, samples):
     max_length = max(len(sample["tokens"]) for sample in samples)

@@ -1,6 +1,15 @@
-from pyspark.sql import SparkSession, functions as F
-
 from contextlib import contextmanager
+from typing import *
+
+from pyspark import SparkContext
+from pyspark.sql import (
+  SparkSession,
+  functions as F,
+  types as T
+)
+import pandas as pd
+
+from transformers import AutoTokenizer
 
 def init_spark_session() -> SparkSession:
   master = SparkSession.builder.master("local") # pyright: ignore[reportAttributeAccessIssue]
@@ -57,6 +66,54 @@ def segment_bools(ls):
     out.append((curr_start, len(ls) + 1))
 
   return out
+
+def pudf_tokenize(config):
+  sc = SparkContext.getOrCreate()
+
+  tokenizer = AutoTokenizer.from_pretrained(config["model"])
+  tokenizer = sc.broadcast(tokenizer)
+
+  @F.pandas_udf(T.StructType([ # pyright: ignore[reportPrivateImportUsage, reportCallIssue]
+    T.StructField("tokens",     T.ArrayType(T.ShortType())),
+    T.StructField("mask",       T.ArrayType(T.ArrayType(T.ShortType()))),
+    # T.StructField("offsets",    T.ArrayType(T.ArrayType(T.IntegerType()))),
+    T.StructField("rationale", T.MapType(T.IntegerType(), T.FloatType()))
+  ]))
+  def func(iterator: Iterator[Tuple[pd.Series, pd.Series, pd.Series]]) -> Iterator[pd.DataFrame]:
+    for text, rationale, spans in iterator:
+      text, rationale, spans = tuple(x.to_list() for x in [text, rationale, spans])
+
+      tokenized = tokenizer.value(
+        text,
+        truncation=True,
+        max_length=config["max_length"],
+        return_offsets_mapping=True,
+      )
+
+      masks = [segment_bools(mask) for mask in tokenized["attention_mask"]]
+      offsets = tokenized["offset_mapping"]
+      rationale2 = [dict() for _ in range(len(text))]
+
+      for i in range(len(text)):
+        if rationale[i] is not None:
+          for (r_key, r_val) in rationale[i].items():
+            if r_key < len(spans[i]) and r_val > 0:
+              s_start, s_end = tuple(spans[i][r_key])
+              for j in range(len(offsets[i])):
+                check_left = offsets[i][j][0] >= s_start
+                check_right = offsets[i][j][1] <= s_end
+                valid = offsets[i][j][0] != offsets[i][j][1]
+                if check_left and check_right and valid:
+                  rationale2[i][j] = r_val
+
+      yield pd.DataFrame({
+        "tokens": tokenized["input_ids"],
+        "mask": masks,
+        "rationale": rationale2,
+        # "offsets": offsets.tolist(),
+      })
+
+  return func
 
 def arr_to_pos_pairs(df, col_id, col_val, sparse=False, sparse_filter=None, include_nulls=False):
   if sparse_filter is not None and not sparse:
@@ -121,13 +178,13 @@ def agg_cols(df, agg, cols_key, cols_val):
     agg(F.col(col)).alias(col) for col in cols_val
   ])
 
-def avg_cols(df, cols_key, cols_val):
-  cols_key = make_list(cols_key)
-  cols_val = make_list(cols_val)
+# def avg_cols(df, cols_key, cols_val):
+#   cols_key = make_list(cols_key)
+#   cols_val = make_list(cols_val)
 
-  return df.groupBy(*cols_key).agg(*[
-    F.avg(F.col(col).cast("float")).alias(col) for col in cols_val
-  ])
+#   return df.groupBy(*cols_key).agg(*[
+#     F.avg(F.col(col).cast("float")).alias(col) for col in cols_val
+#   ])
 
 def drop_join(df1, df2, col_id, cols_drop=None, how="left"):
   cols_drop = make_list(cols_drop)
