@@ -96,22 +96,17 @@ class HatePreprocessor:
         masks = [help.segment_bools(mask) for mask in tokenized["attention_mask"]]
         offsets = tokenized["offset_mapping"]
         rationale2 = [dict() for _ in range(len(text))]
-
-        if rationale is None:
-          print("rationale is none")
           
-        if rationale is not None:
-          for i in range(len(text)):
-            if rationale[i] is not None:
-              for (r_key, r_val) in rationale[i].items():
-                if r_key < len(spans[i]) and r_val > 0:
-                  s_start, s_end = tuple(spans[i][r_key])
-                  for j in range(len(offsets[i])):
-                    check_left = offsets[i][j][0] >= s_start
-                    check_right = offsets[i][j][1] <= s_end
-                    valid = offsets[i][j][0] != offsets[i][j][1]
-                    if check_left and check_right and valid:
-                      rationale2[i][j] = r_val
+        for i in range(len(text)):
+          for (r_key, r_val) in rationale[i].items():
+            if r_key < len(spans[i]) and r_val > 0:
+              s_start, s_end = tuple(spans[i][r_key])
+              for j in range(len(offsets[i])):
+                check_left = offsets[i][j][0] >= s_start
+                check_right = offsets[i][j][1] <= s_end
+                valid = offsets[i][j][0] != offsets[i][j][1]
+                if check_left and check_right and valid:
+                  rationale2[i][j] = r_val
 
         yield pd.DataFrame({
           "tokens": tokenized["input_ids"],
