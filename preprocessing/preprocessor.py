@@ -27,9 +27,8 @@ class Preprocessor:
     return spark.read.parquet(path)
 
   def write(self, df, stats):
-    print("do shuffle + split")
-    split_dfs = df.orderBy(F.rand()).randomSplit([0.8, 0.1, 0.1])
     print("do write")
+    split_dfs = df.orderBy(F.rand()).randomSplit([0.8, 0.1, 0.1])
     split_names = ["train", "valid", "test"]
     for split_df, split in zip(split_dfs, split_names):
       file_path = self.config["output_dataset_path"] \

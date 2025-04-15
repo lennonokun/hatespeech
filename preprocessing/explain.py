@@ -1,7 +1,6 @@
 from typing import *
 
 import json
-import numpy as np
 
 from pyspark import SparkContext
 from pyspark.sql import functions as F, types as T
@@ -49,17 +48,6 @@ class ExplainPreprocessor(Preprocessor):
     self.pudf_tokenize = utils.pudf_tokenize(config)
 
   @staticmethod
-  @F.udf(returnType=T.ArrayType(T.FloatType(), False))
-  def udf_rationale_mean(rationale):
-    rationale = [r for r in rationale if r is not None]
-    if len(rationale) == 0:
-      return []
-    if len(set(len(r) for r in rationale)) > 1:
-      return []
-    else:
-      return np.mean(rationale, axis=0).tolist()
-
-  @staticmethod
   def _udf_detokenize(detokenizer):
     @F.udf(returnType=T.StructType([
       T.StructField("text", T.StringType(), False),
@@ -83,77 +71,78 @@ class ExplainPreprocessor(Preprocessor):
       return text, spans
 
     return func
-    
-  def preprocess(self, df):
-    df = df.withColumn("id", F.monotonically_increasing_id()) \
-      .drop("post_id")
 
-    print("do rationale")
+  @staticmethod
+  @F.udf(returnType=T.MapType(T.IntegerType(), T.FloatType()))
+  def udf_adjust_rationale(rationale, spans, offsets):
+    adjusted = {}
+    for new_pos, (new_start, new_end) in enumerate(offsets):
+      for old_pos, (old_start, old_end) in enumerate(spans):
+        if (new_start >= old_start) and (new_end <= old_end):
+          if old_pos in rationale:
+            adjusted[new_pos] = rationale[old_pos]
+          # break  # Assuming each new token maps to one original
+      return adjusted
+
+  def preprocess(self, df):
+    df = df.withColumn("id", F.monotonically_increasing_id()).drop("post_id")
+
+    # label + target
+    df_annotator = df.select("id", F.explode("annotators").alias("annotator")) \
+      .select("id", *[F.col(f"annotator.{member}") for member in ["label", "target"]]) 
+
+    df_label = utils.onehot(df_annotator, "id", "label", self.config["labels"], False)
+    df_label = utils.agg_cols(df_label, F.avg, "id", self.config["labels"])
+    if "label" in self.config["round_train"]:
+      df_label = utils.apply_cols(df_label, "id", self.config["labels"], F.round)
+    df_label = utils.prefix_cols(df_label, self.config["labels"], "label_")
+    
+    df_target = utils.onehot(df_annotator, "id", "target", self.config["targets"], True)
+    df_target = utils.agg_cols(df_target, F.avg, "id", self.config["targets"])
+    if "target" in self.config["round_train"]:
+      df_target = utils.apply_cols(df_target, "id", self.config["targets"], F.round)
+    df_target = utils.prefix_cols(df_target, self.config["targets"], "target_")
+    
+    df = df.drop("annotators").join(df_label, "id", "left").join(df_target, "id", "left")
+    
+    # rationale agg + pos map 
     df_rationale = df.select("id", F.explode("rationales").alias("rationale"))
     df_rationale = utils.arr_to_pos_pairs(df_rationale, "id", "rationale", sparse=True)
-    df_rationale = utils.agg_cols(df_rationale, F.sum, ["id", "pos"], "col") \
-      .withColumn("col", F.col("col").cast("float") / self.config["num_annotators"])
+    df_rationale = utils.agg_cols(df_rationale, F.avg, ["id", "pos"], "col")
     if "rationale" in self.config["round_train"]:
       df_rationale = df_rationale.withColumn("col", F.round("col"))
+
     df_rationale = utils.pairs_to_map(df_rationale, "id", "pos", "col", "rationale")
-    df = utils.drop_join(df, df_rationale, "id", "rationales") \
+    df = df.drop("rationales").join(df_rationale, "id", "left") \
       .withColumn("rationale", F.coalesce("rationale", utils.empty_map()))
     
-    df.show()
-
-    print("do label + target")
-    df_annotator = df.select("id", F.explode("annotators").alias("annotator"))
-    df_label = utils.cat_to_onehot(df_annotator, "id", "annotator.label", self.config["labels"]) \
-      .groupBy("id") \
-      .agg(*[(F.sum(F.col(cat).cast("float")) / self.config["num_annotators"]).alias(f"label_{cat}") for cat in self.config["labels"]])
-    if "label" in self.config["round_train"]:
-      cols = [f"label_{val}" for val in self.config["labels"]]
-      df_label = df_label.select("id", *[F.round(col).alias(col) for col in cols])
-    
-    df_label.show()
-    df_target = df_annotator.select("id", F.explode("annotator.target").alias("target"))
-    df_target = utils.cat_to_ord(df_target, "id", "target", self.config["targets"])  \
-      .filter(F.col("target").isNotNull()) \
-      .groupBy("id", "target") \
-      .count() \
-      .withColumn("count", F.col("count").cast("float") / self.config["num_annotators"])
-    if "target" in self.config["round_train"]:
-      df_target = df_target.withColumn("count", F.round("count"))
-    df_target = utils.pairs_to_map(df_target, "id", "target", "count", col_out="target")
-    df_target.show()
-    
-    df = utils.drop_join(df, df_label, "id", "annotators")
-    df = utils.drop_join(df, df_target, "id") \
-      .withColumn("target", F.coalesce("target", utils.empty_map()))
-
-    df.show()
-
-    # detokenize and get text + original spans
-    print("do detokenize")
+    # detokenize
     df_detokenize = df.select("id", self.udf_detokenize("post_tokens").alias("ret")) \
       .select("id", "ret.*")
-    df = utils.drop_join(df, df_detokenize, "id", "post_tokens")
+    df = df.drop("post_tokens").join(df_detokenize, "id")
 
-    # retokenize and adjust rationale with original spans
-    print("do tokenize")
-    df_tokenized = utils.batched_pdf(df, self.pudf_tokenize, "id", ["text", "rationale", "spans"], 256)
-    df = utils.drop_join(df, df_tokenized, "id", ["text", "rationale", "spans"])
+    # tokenize
+    df_tokenize = utils.batched_pdf(df, self.pudf_tokenize, "id", ["text"], 256)
+    df = df.drop("text").join(df_tokenize, "id")
 
-    df.show()
+    # adjust rationales
+    adjust_expr = self.udf_adjust_rationale("rationale", "spans", "offsets")
+    df = df.withColumn("rationale2", adjust_expr) \
+      .drop("rationale", "spans", "offsets") \
+      .withColumnRenamed("rationale2", "rationale")
+   
     return df
 
   def get_stats(self, df):
-    get_freqs = lambda avgs: [avg / self.config["num_annotators"] for avg in avgs]
-    get_freq = lambda avg: avg / self.config["num_annotators"]
-    
     label_cols = [f"label_{val}" for val in self.config["labels"]]
+    target_cols = [f"target_{val}" for val in self.config["targets"]]
     label_avgs = utils.avg_cols(df, label_cols)
-    target_avgs = utils.avg_map(df, "target", range(self.config["num_targets"]))
+    target_avgs = utils.avg_cols(df, target_cols)
     rationale_sum = utils.sum_all_vals(df, "rationale")
     mask_sum = utils.sum_span_widths(df, "mask")
 
     return {
-      "label_freqs": get_freqs(label_avgs),
-      "target_freqs": get_freqs(target_avgs),
-      "rationale_freq": get_freq(rationale_sum / mask_sum)
+      "label_freqs": label_avgs,
+      "target_freqs": target_avgs,
+      "rationale_freq": rationale_sum / mask_sum
     }

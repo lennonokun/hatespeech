@@ -20,9 +20,7 @@ class MeasuringPreprocessor(Preprocessor):
     df = df.groupBy("comment_id") \
       .agg(F.avg("hate_speech_score").alias("score"), F.first("text").alias("text"))
 
-    df_tokenized = utils.batched_pdf(
-      df, self.pudf_tokenize, "comment_id", ["text", F.lit(None), F.lit(None)], 256
-    )
+    df_tokenized = utils.batched_pdf(df, self.pudf_tokenize, "comment_id", ["text"], 256)
     df = df.join(df_tokenized, "comment_id") \
       .drop("text", "rationale", "spans")
 

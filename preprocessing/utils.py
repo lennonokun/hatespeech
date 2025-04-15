@@ -16,13 +16,13 @@ def init_spark_session() -> SparkSession:
   return master \
     .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
     .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \
+    .config("spark.executor.memory", "4g") \
+    .config("spark.executor.cores", "4") \
+    .config("spark.driver.memory", "4g") \
+    .config("spark.dynamicAllocation.enabled", "true") \
+    .config("spark.dynamicAllocation.minExecutors", "2") \
+    .config("spark.dynamicAllocation.maxExecutors", "10") \
     .getOrCreate()
-    # .config("spark.executor.memory", "4g") \
-    # .config("spark.executor.cores", "4") \
-    # .config("spark.driver.memory", "4g") \
-    # .config("spark.dynamicAllocation.enabled", "true") \
-    # .config("spark.dynamicAllocation.minExecutors", "2") \
-    # .config("spark.dynamicAllocation.maxExecutors", "10") \
 
 def get_spark_session() -> SparkSession:
   return SparkSession.getActiveSession() or init_spark_session()
@@ -52,6 +52,11 @@ def make_list(x):
   else:
     return [x]
 
+def prefix_cols(df, cols, prefix):
+  for col in cols:
+    df = df.withColumnRenamed(col, f"{prefix}{col}")
+  return df
+  
 def segment_bools(ls):
   out = []
   curr_start = None
@@ -75,42 +80,22 @@ def pudf_tokenize(config):
 
   @F.pandas_udf(T.StructType([ # pyright: ignore[reportPrivateImportUsage, reportCallIssue]
     T.StructField("tokens",     T.ArrayType(T.ShortType())),
-    T.StructField("mask",       T.ArrayType(T.ArrayType(T.ShortType()))),
-    # T.StructField("offsets",    T.ArrayType(T.ArrayType(T.IntegerType()))),
-    T.StructField("rationale", T.MapType(T.IntegerType(), T.FloatType()))
+    T.StructField("mask",       T.ArrayType(T.ArrayType(T.IntegerType()))),
+    T.StructField("offsets",    T.ArrayType(T.ArrayType(T.IntegerType()))),
   ]))
-  def func(iterator: Iterator[Tuple[pd.Series, pd.Series, pd.Series]]) -> Iterator[pd.DataFrame]:
-    for text, rationale, spans in iterator:
-      text, rationale, spans = tuple(x.to_list() for x in [text, rationale, spans])
-
+  def func(iterator: Iterator[pd.Series]) -> Iterator[pd.DataFrame]:
+    for text in iterator:
       tokenized = tokenizer.value(
-        text,
+        text.to_list(),
         truncation=True,
         max_length=config["max_length"],
         return_offsets_mapping=True,
       )
 
-      masks = [segment_bools(mask) for mask in tokenized["attention_mask"]]
-      offsets = tokenized["offset_mapping"]
-      rationale2 = [dict() for _ in range(len(text))]
-
-      for i in range(len(text)):
-        if rationale[i] is not None:
-          for (r_key, r_val) in rationale[i].items():
-            if r_key < len(spans[i]) and r_val > 0:
-              s_start, s_end = tuple(spans[i][r_key])
-              for j in range(len(offsets[i])):
-                check_left = offsets[i][j][0] >= s_start
-                check_right = offsets[i][j][1] <= s_end
-                valid = offsets[i][j][0] != offsets[i][j][1]
-                if check_left and check_right and valid:
-                  rationale2[i][j] = r_val
-
       yield pd.DataFrame({
         "tokens": tokenized["input_ids"],
-        "mask": masks,
-        "rationale": rationale2,
-        # "offsets": offsets.tolist(),
+        "mask": [segment_bools(x) for x in tokenized["attention_mask"]],
+        "offsets": tokenized["offset_mapping"],
       })
 
   return func
@@ -142,33 +127,18 @@ def map_to_pairs(df, col_id, col_val, include_nulls=False):
 def empty_map():
   return F.map_from_arrays(F.array(), F.array())
 
-def cat_to_onehot(df, col_id, col_val, cats):
-  return onehot(df, col_id, col_val, cats, is_arr=False)
-
-def arr_to_onehot(df, col_id, col_val, cats):
-  return onehot(df, col_id, col_val, cats, is_arr=True)
-
 def onehot(df, col_id, col_val, cats, is_arr):
   cat_select = F.array_contains if is_arr else \
     lambda col_val, cat: F.col(col_val) == cat
 
   return df.select(col_id, *[
-    cat_select(col_val, cat).cast("boolean").alias(cat) for cat in cats
+    cat_select(col_val, cat).cast("float").alias(cat) for cat in cats
   ])
 
-def _get_ord_map_expr(cats):
-  map_dict = {cat: i for i, cat in enumerate(cats)}
-  map_flat = sum(map_dict.items(), ())
-  return F.create_map([F.lit(x) for x in map_flat])
-
-def cat_to_ord(df, col_id, col_val, cats):
-  map_expr = _get_ord_map_expr(cats)
-  return df.select(col_id, map_expr[F.col(col_val)].alias(col_val))
-
-def cats_to_ords(df, col_id, col_val, cats):
-  map_expr = _get_ord_map_expr(cats)
-  transform_expr = F.transform(col_val, lambda x: map_expr[x])
-  return df.select(col_id, F.array_compact(transform_expr).alias(col_val))
+def apply_cols(df, cols_id, cols_val, expr_func):
+  cols_id = make_list(cols_id)
+  cols_val = make_list(cols_val)
+  return df.select(*cols_id, *[expr_func(col).alias(col) for col in cols_val])
 
 def agg_cols(df, agg, cols_key, cols_val):
   cols_key = make_list(cols_key)
@@ -177,18 +147,6 @@ def agg_cols(df, agg, cols_key, cols_val):
   return df.groupBy(*cols_key).agg(*[
     agg(F.col(col)).alias(col) for col in cols_val
   ])
-
-# def avg_cols(df, cols_key, cols_val):
-#   cols_key = make_list(cols_key)
-#   cols_val = make_list(cols_val)
-
-#   return df.groupBy(*cols_key).agg(*[
-#     F.avg(F.col(col).cast("float")).alias(col) for col in cols_val
-#   ])
-
-def drop_join(df1, df2, col_id, cols_drop=None, how="left"):
-  cols_drop = make_list(cols_drop)
-  return df1.drop(*cols_drop).join(df2, on=col_id, how=how)
 
 def avg_cols(df, cols):
   return df.select(cols) \
