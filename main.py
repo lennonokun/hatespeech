@@ -8,7 +8,6 @@ from lightning import Trainer
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
-from datasets.utils.logging import disable_progress_bar
 
 from preprocess import do_fix, HatePreprocessor
 from datamodule import HateDatamodule
@@ -76,7 +75,6 @@ if __name__ == "__main__":
   # os.environ["TOKENIZERS_PARALLELISM"] = "false"
   torch.set_float32_matmul_precision("medium")
   warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
-  disable_progress_bar()
 
   config = {
     "model": "google/electra-small-discriminator",
