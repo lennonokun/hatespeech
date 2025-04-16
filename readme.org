@@ -1,12 +1,20 @@
+* sketching
+
+model -> task_set -> task -> loss
+            L__________________^
+	   (effectively flattened)
+
+task_sets are mutually exclusive in data, cannot flatten
+should they have a loss coefficient between them?
+should be normalized by number of samples (rescale task_set losses)
+for now give equal weighing, future: try uncertainty weighing?
+
 * todo
 
 ** short-term
-- WHEN WRITING MULTIMODEL IT SEEMS LIKE IMPLEMENTATION OF DWA IS FLAWED
-- stats shouldnt be in dataloader
 - get multi dataset learning working
 - separate data loading into its own module
 - abstract multi dataset model
-- abstract multi task model
 - update readme papers + datasets
 - stopping callback based on multiple metrics?
 
