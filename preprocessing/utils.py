@@ -12,16 +12,11 @@ import pandas as pd
 from transformers import AutoTokenizer
 
 def init_spark_session() -> SparkSession:
-  master = SparkSession.builder.master("local") # pyright: ignore[reportAttributeAccessIssue]
+  master = SparkSession.builder.master("local[4]") # pyright: ignore[reportAttributeAccessIssue]
   return master \
     .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
     .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \
-    .config("spark.executor.memory", "4g") \
-    .config("spark.executor.cores", "4") \
-    .config("spark.driver.memory", "4g") \
-    .config("spark.dynamicAllocation.enabled", "true") \
-    .config("spark.dynamicAllocation.minExecutors", "2") \
-    .config("spark.dynamicAllocation.maxExecutors", "10") \
+    .config("spark.driver.memory", "2g") \
     .getOrCreate()
 
 def get_spark_session() -> SparkSession:

@@ -51,7 +51,7 @@ class ExplainPreprocessor(Preprocessor):
   def _udf_detokenize(detokenizer):
     @F.udf(returnType=T.StructType([
       T.StructField("text", T.StringType(), False),
-      T.StructField("spans", T.ArrayType(T.ArrayType(T.IntegerType(), False), False), False)
+      T.StructField("spans", T.ArrayType(T.ArrayType(T.IntegerType())))
     ]))
     def func(tokens):
       text = detokenizer.detokenize(tokens)
@@ -81,7 +81,6 @@ class ExplainPreprocessor(Preprocessor):
         if (new_start >= old_start) and (new_end <= old_end):
           if old_pos in rationale:
             adjusted[new_pos] = rationale[old_pos]
-          # break  # Assuming each new token maps to one original
       return adjusted
 
   def preprocess(self, df):
@@ -91,17 +90,17 @@ class ExplainPreprocessor(Preprocessor):
     df_annotator = df.select("id", F.explode("annotators").alias("annotator")) \
       .select("id", *[F.col(f"annotator.{member}") for member in ["label", "target"]]) 
 
-    df_label = utils.onehot(df_annotator, "id", "label", self.config["labels"], False)
-    df_label = utils.agg_cols(df_label, F.avg, "id", self.config["labels"])
+    df_label = utils.onehot(df_annotator, "id", "label", self.config["cats_label"], False)
+    df_label = utils.agg_cols(df_label, F.avg, "id", self.config["cats_label"])
+    df_label = utils.prefix_cols(df_label, self.config["cats_label"], "label_")
     if "label" in self.config["round_train"]:
-      df_label = utils.apply_cols(df_label, "id", self.config["labels"], F.round)
-    df_label = utils.prefix_cols(df_label, self.config["labels"], "label_")
+      df_label = utils.apply_cols(df_label, "id", self.config["cols_label"], F.round)
     
-    df_target = utils.onehot(df_annotator, "id", "target", self.config["targets"], True)
-    df_target = utils.agg_cols(df_target, F.avg, "id", self.config["targets"])
+    df_target = utils.onehot(df_annotator, "id", "target", self.config["cats_target"], True)
+    df_target = utils.agg_cols(df_target, F.avg, "id", self.config["cats_target"])
+    df_target = utils.prefix_cols(df_target, self.config["cats_target"], "target_")
     if "target" in self.config["round_train"]:
-      df_target = utils.apply_cols(df_target, "id", self.config["targets"], F.round)
-    df_target = utils.prefix_cols(df_target, self.config["targets"], "target_")
+      df_target = utils.apply_cols(df_target, "id", self.config["cols_target"], F.round)
     
     df = df.drop("annotators").join(df_label, "id", "left").join(df_target, "id", "left")
     
@@ -111,7 +110,6 @@ class ExplainPreprocessor(Preprocessor):
     df_rationale = utils.agg_cols(df_rationale, F.avg, ["id", "pos"], "col")
     if "rationale" in self.config["round_train"]:
       df_rationale = df_rationale.withColumn("col", F.round("col"))
-
     df_rationale = utils.pairs_to_map(df_rationale, "id", "pos", "col", "rationale")
     df = df.drop("rationales").join(df_rationale, "id", "left") \
       .withColumn("rationale", F.coalesce("rationale", utils.empty_map()))
@@ -134,10 +132,8 @@ class ExplainPreprocessor(Preprocessor):
     return df
 
   def get_stats(self, df):
-    label_cols = [f"label_{val}" for val in self.config["labels"]]
-    target_cols = [f"target_{val}" for val in self.config["targets"]]
-    label_avgs = utils.avg_cols(df, label_cols)
-    target_avgs = utils.avg_cols(df, target_cols)
+    label_avgs = utils.avg_cols(df, self.config["cols_label"])
+    target_avgs = utils.avg_cols(df, self.config["cols_target"])
     rationale_sum = utils.sum_all_vals(df, "rationale")
     mask_sum = utils.sum_span_widths(df, "mask")
 

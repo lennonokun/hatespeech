@@ -4,7 +4,7 @@ import argparse
 
 import torch
 from lightning import Trainer
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+# from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
@@ -16,20 +16,23 @@ def do_train(config):
   data = HateDatamodule(config)
   module = HateModule(config)
   
-  trainer = Trainer(
-    enable_checkpointing=True,
-    max_epochs=30,
-    # limit_train_batches=0.2,
-    # limit_val_batches=0.2,
-    accelerator="auto",
-    # gradient_clip_val=5.0,
-    precision="bf16-mixed",
-    logger=TensorBoardLogger("tb_logs", name="hatexplain"),
-    devices=1,
-    callbacks=[
+  trainer_kwargs = {
+    "enable_checkpointing": True,
+    "max_epochs": 30,
+    "accelerator": "auto",
+    # "gradient_clip_val": 5.0,
+    "precision": "bf16-mixed",
+    "logger": TensorBoardLogger("tb_logs", name="hatexplain"),
+    "devices": 1,
+    "callbacks": [
       # EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
     ],
-  )
+  }
+  if config["quick_model"]:
+    trainer_kwargs["limit_train_batches"] = 0.2
+    trainer_kwargs["limit_val_batches"] = 0.2
+
+  trainer = Trainer(**trainer_kwargs)
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
@@ -74,37 +77,42 @@ if __name__ == "__main__":
   warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
 
   config = {
-    "model": "google/electra-small-discriminator",
-    # "model": "vinai/bertweet-base",
-    "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
-    "targets": [
-      "African", "Arab", "Asian", "Caucasian",
-      "Hispanic", "Homosexual", "Islam", "Jewish",
-      "Other", "Refugee", "Women"
+    # data misc
+    "cats_target": [
+      "African", "Arab", "Asian", "Caucasian", "Hispanic",
+      "Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
     ],
-    "labels": ["hatespeech", "offensive", "normal"],
-    "multitask_targets": True,
-    "num_targets": 11,
-    "num_labels": 3,
-    "num_annotators": 3,
+    "cats_label": ["hatespeech", "offensive", "normal"],
     "round_train": ["target", "label", "rationale"],
-    "num_tasks": 3,
+    "tokenize_batch_size": 64,
+    # preprocessing paths
     "explain_dirty_path": "data/explain/dirty.json",
     "input_dataset_path": "data/{name}/input.parquet",
     "output_dataset_path": "data/{name}/output_{split}.parquet",
     "output_stats_path": "data/{name}/stats.json",
-    "logging": "terminal",
-    "tokenize_batch_size": 64,
+    # modeling misc
+    "model": "google/electra-small-discriminator",
+    "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
     "max_length": 128,
     "batch_size": 142,
+    "patience": 3,
     "learning_rate": 5e-5,
-    "vat_epsilon": 0.6,
+    "logging": "terminal",
+    "quick_model": False,
+    # MTL + VAT/GAT
+    "num_tasks": 3,
+    "multitask_targets": True,
     "mtl_norm_initial": True,
     "mtl_norm_length": 10,
     "mtl_weighing": "dwa",
     "mtl_dwa_T": 2.0,
-    "patience": 3,
+    "vat_epsilon": 0.0,
   }
+  # more data
+  config["num_target"] = len(config["cats_target"])
+  config["num_label"] = len(config["cats_label"])
+  config["cols_target"] = [f"target_{cat}" for cat in config["cats_target"]]
+  config["cols_label"] = [f"label_{cat}" for cat in config["cats_label"]]
   
   mode_methods = {
     "fix": do_fix,

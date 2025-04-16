@@ -26,25 +26,14 @@ class HateModule(LightningModule):
     self.model = AutoModel.from_pretrained(
       cfg["model"],
       low_cpu_mem_usage=True,
-      # quantization_cfg=QuantoCfg(
-      #   quantization_dtype="nf4",
-      #   # quantization_method="bitsandbytes",
-      #   load_in_low_bit_precision=True,
-      #   compute_dtype="bfloat16",
-      #   # quantize_embeddings=True,
-      # )
-      # nf4_cfg = BitsAndBytesCfg(
-      #   load_in_4bit=True,
-      #   bnb_4bit_quant_type="nf4",
-      # )
     )
 
     adapters.init(self.model)
     self.model.add_adapter("adapter", DiReftConfig(r=8))
     self.model.set_active_adapters("adapter")
     
-    self.head_label = nn.Linear(self.model.config.hidden_size, cfg["num_labels"])
-    self.head_target = nn.Linear(self.model.config.hidden_size, cfg["num_targets"])
+    self.head_label = nn.Linear(self.model.config.hidden_size, cfg["num_label"])
+    self.head_target = nn.Linear(self.model.config.hidden_size, cfg["num_target"])
     self.head_rationale = nn.Linear(self.model.config.hidden_size, 1)
 
     # TODO: weights / focal loss for targets and rationales
@@ -58,8 +47,8 @@ class HateModule(LightningModule):
     # each target is its own task
     # TODO differentiate num_tasks?
     if cfg["multitask_targets"]:
-      self.num_tasks = cfg["num_targets"] + cfg["num_tasks"] - 1
-      target_importances = 5e0 * np.ones(cfg["num_targets"]) / cfg["num_targets"]
+      self.num_tasks = cfg["num_target"] + cfg["num_tasks"] - 1
+      target_importances = np.full(cfg["num_target"], 5e0 / cfg["num_target"])
       task_importances = np.concatenate(([1], target_importances, [1]), axis=0)
     else:
       self.num_tasks = cfg["num_tasks"]
@@ -78,21 +67,21 @@ class HateModule(LightningModule):
     self.splits = ["train", "valid", "test"]
     self.target_metrics = {split: MetricCollection({
       # "acc": clf.MultilabelAccuracy(
-      #   num_labels=cfg["num_targets"],
+      #   num_labels=cfg["num_target"],
       #   average="micro",
       # ),
       "f1": clf.MultilabelF1Score(
-        num_labels=cfg["num_targets"],
+        num_labels=cfg["num_target"],
         average="micro",
       )
     }, prefix=f"{split}_target_").cuda() for split in self.splits}
     self.label_metrics = {split: MetricCollection({
       # "acc": clf.MulticlassAccuracy(
-      #   num_classes=cfg["num_labels"],
+      #   num_classes=cfg["num_label"],
       #   average="macro",
       # ),
       "f1": clf.MulticlassF1Score(
-        num_classes=cfg["num_labels"],
+        num_classes=cfg["num_label"],
         average="macro",
       ),
     }, prefix=f"{split}_label_").cuda() for split in self.splits}
@@ -103,15 +92,15 @@ class HateModule(LightningModule):
 
     self.target_test_metrics = MetricCollection({
       "precision": clf.MultilabelPrecision(
-        num_labels=cfg["num_targets"],
+        num_labels=cfg["num_target"],
         average="macro",
       ), "recall": clf.MultilabelRecall(
-        num_labels=cfg["num_targets"],
+        num_labels=cfg["num_target"],
         average="macro",
       ),
     }, prefix="test_target_").cuda()
     self.target_test_f1_metric = clf.MultilabelF1Score(
-      num_labels=cfg["num_targets"],
+      num_labels=cfg["num_target"],
       average="none",
     )
    
@@ -191,7 +180,6 @@ class HateModule(LightningModule):
     else:
       return losses.sum()
     # TODO return all results
-   
   
   def compute(self, embeddings, mask, annotations, virtual=False):
     label, target, rationale = annotations
@@ -232,18 +220,17 @@ class HateModule(LightningModule):
     return (embeddings + perturbation).detach()
   
   def compute_step(self, batch, split):
-    batch1, batch2 = batch
-    annotations = (batch1["label"], batch1["target"], batch1["rationale"])
+    b1, b2 = batch
+    annotations = (b1["label"], b1["target"], b1["rationale"])
+    b1_size = b1["label"].shape[0]
 
-    # if split == "train":
-    #   embeddings = self.virtual_adversary(tokens, mask, annotations)
-    # else:
-    batch1_size = batch1["label"].shape[0]
-    embeddings = self.get_embeddings(batch1["tokens"])
+    if split == "train" and self.cfg["vat_epsilon"] > 0.0:
+      embeddings = self.virtual_adversary(b1["tokens"], b1["mask"], b1["annotations"])
+    else:
+      embeddings = self.get_embeddings(b1["tokens"])
 
-    results = self.compute(embeddings, batch1["mask"], annotations)
+    results = self.compute(embeddings, b1["mask"], annotations)
     results_label, results_target, results_rationale, loss = results
-    # print(torch.autograd.grad(loss, embeddings, retain_graph=True, create_graph=True)[0])
 
     label_metrics = self.label_metrics[split](*results_label)
     target_metrics = self.target_metrics[split](*results_target)
@@ -256,18 +243,18 @@ class HateModule(LightningModule):
 
     # TODO for now dont clog up terminal
     if split != "train":
-      self.log_dict(target_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
-      self.log_dict(label_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
-      self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_metrics_on_step)
+      self.log_dict(target_metrics, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=log_metrics_on_step)
+      self.log_dict(label_metrics, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=log_metrics_on_step)
+      self.log_dict(rationale_metrics, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=log_metrics_on_step)
 
     if split == "train":
-      self.log("train_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=log_loss_on_step)
+      self.log("train_loss", loss, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=log_loss_on_step)
       # self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       # self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       return loss
     elif split == "valid":
-      self.log("valid_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch1_size, on_step=False)
+      self.log("valid_loss", loss, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=False)
       # self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
       # self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)

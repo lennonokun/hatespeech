@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 
 # batch sampled
 class CombinedDataset(Dataset):
-  def __init__(self, *datasets):
+  def __init__(self, datasets):
     self.datasets = datasets
 
     lengths = np.array([len(dataset) for dataset in datasets])
@@ -42,9 +42,7 @@ class HateDataset(Dataset):
 
     self.locs = {}
     for var in multis:
-      # TODO: change pattern
-      cats = self.config[f"{var}s"]
-      self.locs[var] = [self.df.columns.get_loc(f"{var}_{cat}") for cat in cats]
+      self.locs[var] = [self.df.columns.get_loc(col) for col in self.config[f"cols_{var}"]]
     for var in unis:
       self.locs[var] = self.df.columns.get_loc(var)
 
@@ -132,10 +130,10 @@ class HateDatamodule(LightningDataModule):
     self.datasets = {}
     self.samplers = {}
     for split in ["train", "valid", "test"]:
-      self.datasets[split] = CombinedDataset(
+      self.datasets[split] = CombinedDataset([
         ExplainDataset(self.config, split),
         MeasuringDataset(self.config, split),
-      )
+      ])
       self.samplers[split] = BatchSampler(
         RandomSampler(self.datasets[split]),
         batch_size=self.config["batch_size"],

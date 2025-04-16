@@ -43,8 +43,8 @@ class HateVisualizer:
 
     eval_prob_label = prob_label[pred_label_idx]
     eval_probs_target = prob_target[preds_target_idx]
-    pred_label = self.config["labels"][pred_label_idx]
-    preds_target = [self.config["targets"][idx] for idx in preds_target_idx]
+    pred_label = self.config["cats_label"][pred_label_idx]
+    preds_target = [self.config["cats_target"][idx] for idx in preds_target_idx]
 
     vis_rationale = self.visualize_rationale(prob_rationale > 0.5, offsets[0])
 
@@ -70,13 +70,13 @@ class HateVisualizer:
     preds_rationale = prob_rationale > (0.5 - 1e-7)
 
     for i in range(len(texts)):
-      true_label = self.config["labels"][trues_label_idx[i]]
-      pred_label = self.config["labels"][preds_label_idx[i]]
+      true_label = self.config["cats_label"][trues_label_idx[i]]
+      pred_label = self.config["cats_label"][preds_label_idx[i]]
 
       true_target_idx = trues_target_idx[trues_target_idx[:, 0] == i, :][:, 1]
       pred_target_idx = preds_target_idx[preds_target_idx[:, 0] == i, :][:, 1]
-      true_targets = [self.config["targets"][j] for j in true_target_idx]
-      pred_targets = [self.config["targets"][j] for j in pred_target_idx]
+      true_targets = [self.config["cats_target"][j] for j in true_target_idx]
+      pred_targets = [self.config["cats_target"][j] for j in pred_target_idx]
 
       print(texts[i])
       print(self.visualize_rationale(trues_rationale[i], spans[i]))
