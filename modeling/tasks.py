@@ -5,6 +5,7 @@ from torch import nn
 
 from torchmetrics import MetricCollection
 from torchmetrics import classification as clf
+from torchmetrics import regression as reg
 
 from .custom import MaskedBinaryAccuracy, MaskedBinaryF1, MyBCELoss
 
@@ -104,7 +105,7 @@ class LabelTask(BaseTask):
     super().__init__(
       loss_fn = MyBCELoss(freq=config["stats"]["label_freqs"]),
       loss_args = ["logits", "trues"],
-      metrics = MetricCollection({"target_f1": clf.MulticlassF1Score(
+      metrics = MetricCollection({"label_f1": clf.MulticlassF1Score(
         num_classes=config["num_label"], average="macro",
       )}),
       metrics_args = ["preds", "hards"],
@@ -118,4 +119,20 @@ class LabelTask(BaseTask):
       "trues": batch["label"],
       "preds": torch.argmax(logits, dim=-1),
       "hards": torch.argmax(batch["label"], dim=-1)
+    }
+
+class ScoreTask(BaseTask):
+  def __init__(self, config):
+    super().__init__(
+      loss_fn = nn.MSELoss(),
+      loss_args = ["preds", "trues"],
+      metrics = MetricCollection({"score_mse": reg.MeanSquaredError()}),
+      metrics_args = ["preds", "trues"],
+    )
+    self.head = nn.Linear(config["num_hidden"], 1)
+
+  def forward(self, hidden, batch):
+    return {
+      "preds": self.head(hidden[:, 0, :]).squeeze(-1),
+      "trues": batch["score"],
     }

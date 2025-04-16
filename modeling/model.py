@@ -6,17 +6,21 @@ from adapters import DiReftConfig
 from transformers import AutoModel 
 
 from .multimodel import BaseMultiModel
-from .tasks import TargetTask, RationaleTask, LabelTask
+from .tasks import TargetTask, RationaleTask, LabelTask, ScoreTask
 
 class HateModule(BaseMultiModel):
   def __init__(self, config):
 
-    tasks = {
-      "target": TargetTask(config),
-      "rationale": RationaleTask(config),
-      "label": LabelTask(config),
+    task_sets = {
+      "explain": {
+        "target": TargetTask(config),
+        "rationale": RationaleTask(config),
+        "label": LabelTask(config),
+      }, "measuring": {
+        "score": ScoreTask(config)
+      }
     }
-    super().__init__(config, tasks)
+    super().__init__(config, task_sets)
 
     self.model = AutoModel.from_pretrained(
       config["model"],

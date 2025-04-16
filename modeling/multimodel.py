@@ -48,51 +48,60 @@ class TaskSetLoss(nn.Module):
     return losses_norm @ (softmax * self.loss_importances)
   
 class BaseMultiModel(ABC, LightningModule):
-  def __init__(self, config, tasks):
+  def __init__(self, config, task_sets):
     ABC.__init__(self)
     LightningModule.__init__(self)
 
-    tasks = {name: task.cuda() for name, task in tasks.items()}
+    # make cuda TODO check if can just do in BaseTask
+    task_sets = {set_name: {
+      name: task.cuda() for name, task in task_set.items()
+    } for set_name, task_set in task_sets.items()}
 
     self.config = config
-    self.tasks = tasks
-    self.task_set_loss = TaskSetLoss(config, tasks)
+    self.task_sets = task_sets
+    self.set_losses = {
+      set_name: TaskSetLoss(config, task_set)
+      for set_name, task_set in task_sets.items()
+    }
+    self.set_names = list(task_sets.keys())
 
   @abstractmethod
   def forward_base(self, batch):
     pass
     
-  def split_step(self, batch, split):
-    batch, _ = batch
-    bsize = batch["label"].shape[0]
+  def split_step(self, named_batches, split):
+    batch_sizes, metricsss, lossess = {}, {}, {}
+    for set_name, set_batch in named_batches.items():
+      hidden = self.forward_base(set_batch)
+      batch_sizes[set_name] = next(iter(set_batch.values())).shape[0]
 
-    hidden = self.forward_base(batch)
+      metricss, losses = {}, {}
+      for task_name, task in self.task_sets[set_name].items():
+        metricss[task_name], losses[task_name] = task.compute(hidden, set_batch, split)
+      metricsss[set_name], lossess[set_name] = metricss, losses
     
-    metricss, losses = {}, {}
-    for name, task in self.tasks.items():
-      metricss[name], losses[name] = task.compute(hidden, batch, split)
-
-    log_kwargs = {
-      "prog_bar": True, "on_epoch": True, "on_step": False, "batch_size": bsize
-    }
+    log_kwargs = {"prog_bar": True, "on_epoch": True, "on_step": False}
 
     # log metrics
     if split != "train":
-      for metrics in metricss.values():
-        self.log_dict(metrics, **log_kwargs)
+      for set_name, metricss in metricsss.items():
+        for metrics in metricss.values():
+          self.log_dict(metrics, batch_size=batch_sizes[set_name], **log_kwargs)
 
     # log losses
-    if split != "test":
-      for name, loss in losses.items():
-        if loss.dim == 0:
-          self.log(f"{split}_{name}_loss", loss, **log_kwargs)
-        elif loss.dim == 1:
-          for i, sub_loss in enumerate(loss):
-            self.log(f"{split}_{name}_loss_{i}", sub_loss, **log_kwargs)
+    # if split != "test":
+    #   for name, loss in losses.items():
+    #     if loss.dim == 0:
+    #       self.log(f"{split}_{name}_loss", loss, **log_kwargs)
+    #     elif loss.dim == 1:
+    #       for i, sub_loss in enumerate(loss):
+    #         self.log(f"{split}_{name}_loss_{i}", sub_loss, **log_kwargs)
 
+    loss = self.config["batch_size"] * sum(
+      self.set_losses[set_name](losses.values(), split) / batch_sizes[set_name] for set_name, losses in lossess.items()
+    )
+    # TODO log?
     # TODO only when split != test?
-    loss = self.task_set_loss(losses.values(), split)
-    self.log(f"{split}_loss", loss, **log_kwargs)
     return loss
     
   def training_step(self, batch):
@@ -105,8 +114,9 @@ class BaseMultiModel(ABC, LightningModule):
     return self.split_step(batch, "test")
 
   def on_split_epoch_end(self, split):
-    for task in self.tasks.values():
-      task.metrics[split].reset()
+    for task_sets in self.task_sets.values():
+      for task in task_sets.values():
+        task.metrics[split].reset()
 
   def on_train_epoch_end(self):
     self.on_split_epoch_end("train")

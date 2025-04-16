@@ -1,10 +1,9 @@
-import os
 import warnings
 import argparse
 
 import torch
 from lightning import Trainer
-# from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.callbacks import RichProgressBar
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
@@ -19,15 +18,14 @@ def do_train(config):
   
   trainer_kwargs = {
     "enable_checkpointing": True,
-    "max_epochs": 25,
+    "max_epochs": 10,
     "accelerator": "auto",
     # "gradient_clip_val": 5.0,
     "precision": "bf16-mixed",
     "logger": TensorBoardLogger("tb_logs", name="hatexplain"),
     "devices": 1,
-    "callbacks": [
+    "callbacks": [RichProgressBar(leave=True)]
       # EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
-    ],
   }
   if config["quick_model"]:
     trainer_kwargs["limit_train_batches"] = 0.2

@@ -1,4 +1,5 @@
 from typing import *
+from collections import OrderedDict
 
 import numpy as np
 from lightning import LightningDataModule
@@ -7,29 +8,37 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import BatchSampler, RandomSampler
 import pyarrow.parquet as pq
 
+# TODO shared feature
 # batch sampled
 class CombinedDataset(Dataset):
-  def __init__(self, datasets):
-    self.datasets = datasets
+  def __init__(self, named_datasets):
+    self.names = list(named_datasets.keys())
+    self.datasets = [named_datasets[name] for name in self.names]
+    self.num_datasets = len(self.datasets)
+    # self.features = features
 
-    lengths = np.array([len(dataset) for dataset in datasets])
+    lengths = np.array([len(dataset) for dataset in self.datasets])
     self.length = np.sum(lengths)
     self.offsets = np.cumsum(lengths) - lengths
-    self.groups = np.arange(len(datasets))
+    self.groups = np.arange(len(self.datasets))
 
   def __len__(self):
     return self.length
 
   def __getitem__(self, idx):
-    idx = np.array(idx)
+    # get indices per name
+    diffs = np.array(idx)[:, None] - self.offsets[None, :]
+    name_reverse_idx = np.argmax(diffs[:, ::-1] >= 0, axis=1)
+    name_idx = (self.num_datasets - 1) - name_reverse_idx
 
-    diffs = idx[:, None] - self.offsets[None, :]
-    buckets = (len(self.datasets) - 1) - np.argmax(diffs[:, ::-1] >= 0, axis=1)
-    groups_idx = [np.where(buckets == val)[0] for val in self.groups]
-    return [
-      self.datasets[dataset_idx][diffs[group_idx, dataset_idx]]
-      for dataset_idx, group_idx in enumerate(groups_idx)
-    ]
+    # group batches 
+    # out_features = []
+    out = {}
+    for i in range(self.num_datasets):
+      curr_name_idx = np.where(name_idx == i)[0]
+      dataset_idx = diffs[curr_name_idx, i]
+      out[self.names[i]] = self.datasets[i][dataset_idx]
+    return out
   
 # batch sampled
 class HateDataset(Dataset):
@@ -127,10 +136,10 @@ class HateDatamodule(LightningDataModule):
     self.datasets = {}
     self.samplers = {}
     for split in ["train", "valid", "test"]:
-      self.datasets[split] = CombinedDataset([
-        ExplainDataset(self.config, split),
-        MeasuringDataset(self.config, split),
-      ])
+      self.datasets[split] = CombinedDataset({
+        "explain": ExplainDataset(self.config, split),
+        "measuring": MeasuringDataset(self.config, split),
+      })
       self.samplers[split] = BatchSampler(
         RandomSampler(self.datasets[split]),
         batch_size=self.config["batch_size"],
