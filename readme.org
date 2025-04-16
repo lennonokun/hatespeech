@@ -1,7 +1,8 @@
 * todo
 
 ** short-term
-- CombinedDataset should group tokens + mask together, just separate features
+- WHEN WRITING MULTIMODEL IT SEEMS LIKE IMPLEMENTATION OF DWA IS FLAWED
+- stats shouldnt be in dataloader
 - get multi dataset learning working
 - separate data loading into its own module
 - abstract multi dataset model
@@ -75,7 +76,7 @@
 │      test_target_f1       │    0.6695500612258911     │
 └───────────────────────────┴───────────────────────────┘
 
-** DWA (T=2) + GAT (eps=0.6)
+** initial n=10 norm (broken) + DWA (T=2) + GAT (eps=0.6)
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃        Test metric        ┃       DataLoader 0        ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -84,7 +85,7 @@
 │      test_target_f1       │    0.6392104625701904     │
 └───────────────────────────┴───────────────────────────┘
 
-** DWA (T=2) + 30 epochs
+** initial n=10 norm (broken) + DWA (T=2) + 30 epochs
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃        Test metric        ┃       DataLoader 0        ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -92,3 +93,5 @@
 │     test_rationale_f1     │    0.7984278202056885     │
 │      test_target_f1       │     0.704976499080658     │
 └───────────────────────────┴───────────────────────────┘
+
+** initial n=10 norm (fixed) + DWA (T=2) + 10 epochs

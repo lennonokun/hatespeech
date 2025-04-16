@@ -1,7 +1,6 @@
 from typing import *
 
 import numpy as np
-import json
 from lightning import LightningDataModule
 
 from torch.utils.data import Dataset, DataLoader
@@ -124,8 +123,6 @@ class HateDatamodule(LightningDataModule):
     self.config = config
 
   def setup(self, stage: str):
-    path = self.config["output_stats_path"].format(name="explain")
-    self.stats = json.load(open(path, "r"))
 
     self.datasets = {}
     self.samplers = {}

@@ -8,8 +8,9 @@ from lightning import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
-from preprocessing import do_fix, ExplainPreprocessor, MeasuringPreprocessor
-from modeling import HateDatamodule, HateModule, HateVisualizer
+from preprocessing import load_stats, do_fix, ExplainPreprocessor, MeasuringPreprocessor
+from modeling import HateDatamodule, HateVisualizer
+from modeling.model import HateModule
 
 def do_train(config):
   torch.cuda.empty_cache()
@@ -18,7 +19,7 @@ def do_train(config):
   
   trainer_kwargs = {
     "enable_checkpointing": True,
-    "max_epochs": 30,
+    "max_epochs": 25,
     "accelerator": "auto",
     # "gradient_clip_val": 5.0,
     "precision": "bf16-mixed",
@@ -93,6 +94,7 @@ if __name__ == "__main__":
     # modeling misc
     "model": "google/electra-small-discriminator",
     "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
+    "num_hidden": 256,
     "max_length": 128,
     "batch_size": 142,
     "patience": 3,
@@ -103,7 +105,7 @@ if __name__ == "__main__":
     "num_tasks": 3,
     "multitask_targets": True,
     "mtl_norm_initial": True,
-    "mtl_norm_length": 10,
+    "mtl_norm_length": 50,
     "mtl_weighing": "dwa",
     "mtl_dwa_T": 2.0,
     "vat_epsilon": 0.0,
@@ -113,6 +115,7 @@ if __name__ == "__main__":
   config["num_label"] = len(config["cats_label"])
   config["cols_target"] = [f"target_{cat}" for cat in config["cats_target"]]
   config["cols_label"] = [f"label_{cat}" for cat in config["cats_label"]]
+  config["stats"] = load_stats(config)
   
   mode_methods = {
     "fix": do_fix,

@@ -22,7 +22,7 @@ class HateModule(LightningModule):
     self.save_hyperparameters()
     # self.automatic_optimization = False
     self.cfg = cfg
-    self.data_module = None
+
     self.model = AutoModel.from_pretrained(
       cfg["model"],
       low_cpu_mem_usage=True,
@@ -37,12 +37,12 @@ class HateModule(LightningModule):
     self.head_rationale = nn.Linear(self.model.config.hidden_size, 1)
 
     # TODO: weights / focal loss for targets and rationales
-    self.label_loss = MyBCELoss()
+    self.label_loss = MyBCELoss(freq=cfg["stats"]["label_freqs"])
     # self.target_loss = FocalLoss(alpha=0.03, gamma=1.5, multilabel=True)
     target_reduce_dim = 0 if cfg["multitask_targets"] else None
-    self.target_loss = MyBCELoss(reduce_dim=target_reduce_dim)
+    self.target_loss = MyBCELoss(freq=cfg["stats"]["target_freqs"], reduce_dim=target_reduce_dim)
     # self.rationale_loss = FocalLoss(alpha=0.3, gamma=2.0)
-    self.rationale_loss = MyBCELoss()
+    self.rationale_loss = MyBCELoss(freq=cfg["stats"]["rationale_freq"])
 
     # each target is its own task
     # TODO differentiate num_tasks?
@@ -61,7 +61,8 @@ class HateModule(LightningModule):
     elif cfg["mtl_weighing"] == "dwa":
       self.task_weights = torch.ones(self.num_tasks, requires_grad=False)
 
-    self.loss_history = []
+    self.initial_loss_history = []
+    self.dwa_loss_history = []
     self.task_norm = None
     
     self.splits = ["train", "valid", "test"]
@@ -89,20 +90,6 @@ class HateModule(LightningModule):
       # "acc": MaskedBinaryAccuracy(),
       "f1": MaskedBinaryF1(),
     }, prefix=f"{split}_rationale_").cuda() for split in self.splits}
-
-    self.target_test_metrics = MetricCollection({
-      "precision": clf.MultilabelPrecision(
-        num_labels=cfg["num_target"],
-        average="macro",
-      ), "recall": clf.MultilabelRecall(
-        num_labels=cfg["num_target"],
-        average="macro",
-      ),
-    }, prefix="test_target_").cuda()
-    self.target_test_f1_metric = clf.MultilabelF1Score(
-      num_labels=cfg["num_target"],
-      average="none",
-    )
    
   def configure_optimizers(self):
     std_params = filter(lambda p: p is not self.task_weights and p.requires_grad, self.parameters())
@@ -110,14 +97,6 @@ class HateModule(LightningModule):
     if self.cfg["mtl_weighing"] == "uw":
       arg.append({"params": [self.task_weights], "lr": self.cfg["learning_rate"] * 10})
     return AdamW(arg)
-
-  def on_fit_start(self):
-    self.label_loss.set_freq(self.trainer.datamodule.stats["label_freqs"]) # pyright: ignore[reportAttributeAccessIssue]
-    self.target_loss.set_freq(self.trainer.datamodule.stats["target_freqs"]) # pyright: ignore[reportAttributeAccessIssue]
-    self.rationale_loss.set_freq(self.trainer.datamodule.stats["rationale_freq"]) # pyright: ignore[reportAttributeAccessIssue]
-
-  def on_test_start(self):
-    self.on_fit_start()
 
   def forward(self, embeddings, mask):
     outputs = self.model(inputs_embeds=embeddings, attention_mask=mask.float())
@@ -153,10 +132,10 @@ class HateModule(LightningModule):
       losses = torch.stack([loss_label, loss_target, loss_rationale])
 
     if not virtual and self.cfg["mtl_norm_initial"]:
-      if len(self.loss_history) < self.cfg["mtl_norm_length"]:
-        self.loss_history.append(losses.detach())
-        if len(self.loss_history) == self.cfg["mtl_norm_length"]:
-          mean_losses = torch.mean(torch.stack(self.loss_history), dim=0) 
+      if len(self.initial_loss_history) < self.cfg["mtl_norm_length"]:
+        self.initial_loss_history.append(losses.detach())
+        if len(self.initial_loss_history) == self.cfg["mtl_norm_length"]:
+          mean_losses = torch.mean(torch.stack(self.initial_loss_history), dim=0) 
           self.task_norm = 1 / (mean_losses + 1e-8)
 
     if self.cfg["mtl_weighing"] == "uw":
@@ -166,15 +145,18 @@ class HateModule(LightningModule):
       loss = 0.5 * (losses / (self.task_weights.exp() ** 2)).sum() + self.task_weights.sum()
       return loss
     elif self.cfg["mtl_weighing"] == "dwa":
-      if len(self.loss_history) == 2:
-        ratios = self.loss_history[0] / (self.loss_history[1] + 1e-8)
+      if self.task_norm is not None:
+        losses *= self.task_norm
+        
+      if len(self.dwa_loss_history) == 2:
+        ratios = self.dwa_loss_history[0] / (self.dwa_loss_history[1] + 1e-8)
       else:
         ratios = torch.ones(self.num_tasks).cuda()
 
       loss = losses @ (F.softmax(ratios / self.cfg["mtl_dwa_T"], dim=0) * self.task_importances)
-      if len(self.loss_history) == 2:
-        self.loss_history.pop(0)
-      self.loss_history.append(losses.detach())
+      if len(self.dwa_loss_history) == 2:
+        self.dwa_loss_history.pop(0)
+      self.dwa_loss_history.append(losses.detach())
 
       return loss
     else:
@@ -235,8 +217,6 @@ class HateModule(LightningModule):
     label_metrics = self.label_metrics[split](*results_label)
     target_metrics = self.target_metrics[split](*results_target)
     rationale_metrics = self.rationale_metrics[split](*results_rationale)
-    # target_test_metrics = self.target_test_metrics(*results_target)
-    # target_test_f1 = self.target_test_f1_metric(*results_target)
 
     log_loss_on_step = self.cfg["logging"] != "terminal"
     log_metrics_on_step = split == "train" and log_loss_on_step
@@ -249,19 +229,9 @@ class HateModule(LightningModule):
 
     if split == "train":
       self.log("train_loss", loss, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=log_loss_on_step)
-      # self.log(f"train_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      # self.log(f"train_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
-      # self.log(f"train_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=log_loss_on_step)
       return loss
     elif split == "valid":
       self.log("valid_loss", loss, prog_bar=True, on_epoch=True, batch_size=b1_size, on_step=False)
-      # self.log(f"valid_label_loss", loss_label, prog_bar=True, on_epoch=True, on_step=False)
-      # self.log(f"valid_target_loss", loss_target, prog_bar=True, on_epoch=True, on_step=False)
-      # self.log(f"valid_rationale_loss", loss_rationale, prog_bar=True, on_epoch=True, on_step=False)
-    # elif split == "test":
-    #   self.log_dict(target_test_metrics, prog_bar=False, on_epoch=True, on_step=False)
-    #   for f1, label in zip(target_test_f1, self.cfg["targets"]):
-    #     self.log(f"test_target_{label.lower()}_f1", f1, prog_bar=False, on_epoch=True, on_step=False)
 
   def training_step(self, batch):
     return self.compute_step(batch, "train")
