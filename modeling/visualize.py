@@ -3,7 +3,7 @@ import numpy as np
 
 from transformers import AutoTokenizer
 
-from .module import HateModule
+from .model import HateModule
 from .datamodule import HateDatamodule
 
 class HateVisualizer:

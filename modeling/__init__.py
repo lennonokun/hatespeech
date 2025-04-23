@@ -1,3 +1,4 @@
 from .datamodule import HateDataset, HateDatamodule
-from .module import HateModule
+from .model import HateModule
 from .visualize import HateVisualizer
+from .custom import MultiEarlyStopping

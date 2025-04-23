@@ -24,6 +24,7 @@ for now give equal weighing, future: try uncertainty weighing?
 - try label smoothing?
 - attention mechanism with rationales?
 - rationales mask including not classifying invalid tokens
+- gradnorm-like normalization every n steps
 
 ** long term
 - text augmentation
@@ -102,4 +103,22 @@ for now give equal weighing, future: try uncertainty weighing?
 │      test_target_f1       │     0.704976499080658     │
 └───────────────────────────┴───────────────────────────┘
 
-** initial n=10 norm (fixed) + DWA (T=2) + 10 epochs
+** initial n=10 norm (fixed) + RW + 10 epochs + r=8 + layers=2
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │    0.5959147810935974     │
+│     test_rationale_f1     │    0.6037663817405701     │
+│      test_score_mse       │    2.0311996936798096     │
+│      test_target_f1       │    0.7122450470924377     │
+└───────────────────────────┴───────────────────────────┘
+
+** initial n=10 norm (fixed) + RW + 20 epochs + r=8 + layers=2
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        Test metric        ┃       DataLoader 0        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       test_label_f1       │     0.610170841217041     │
+│     test_rationale_f1     │    0.6598011255264282     │
+│      test_score_mse       │    1.9366915225982666     │
+│      test_target_f1       │    0.7209393382072449     │
+└───────────────────────────┴───────────────────────────┘

@@ -127,24 +127,33 @@ class MeasuringDataset(HateDataset):
     }
 
 class HateDatamodule(LightningDataModule):
+  _constructors = {
+    "explain": ExplainDataset,
+    "measuring": MeasuringDataset,
+  }
+
   def __init__(self, config):
     super().__init__()
     self.config = config
-
+  
+  def _select_data(self, split):
+    dataset = CombinedDataset({
+      name: self._constructors[name](self.config, split)
+      for name in self.config["active_tasks"]
+    })
+    sampler = BatchSampler(
+      RandomSampler(dataset),
+      batch_size=self.config["batch_size"],
+      drop_last=False
+    )
+    return dataset, sampler
+                  
+  
   def setup(self, stage: str):
-
     self.datasets = {}
     self.samplers = {}
     for split in ["train", "valid", "test"]:
-      self.datasets[split] = CombinedDataset({
-        "explain": ExplainDataset(self.config, split),
-        "measuring": MeasuringDataset(self.config, split),
-      })
-      self.samplers[split] = BatchSampler(
-        RandomSampler(self.datasets[split]),
-        batch_size=self.config["batch_size"],
-        drop_last=False
-      )
+      self.datasets[split], self.samplers[split] = self._select_data(split)
 
   def _get_dataloader(self, split: str):
     return DataLoader(

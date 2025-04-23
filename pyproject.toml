@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.6.0",
     "adapters>=1.1.0",
     "lightning[extra]>=2.5.0.post0",
+    "mlflow>=2.21.3",
     "nltk>=3.9.1",
     "numpy<2.0",
     "pandas>=2.2.3",

@@ -1,8 +1,13 @@
+from dataclasses import dataclass
+from typing import *
+
 import numpy as np
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+from lightning.pytorch.callbacks.callback import Callback
 
 from torchmetrics import Metric
 
@@ -87,3 +92,34 @@ class MyBCELoss(nn.Module):
     )
 
     return reduce_loss_apply_mask(loss, mask, self.reduce_dim)
+
+class MultiEarlyStopping(Callback):
+  def __init__(self, monitors: Dict[str, float], patience: float, num_required: int):
+    super().__init__()
+    self.monitors = monitors
+    self.patience = patience
+    self.num_required = num_required
+
+    self.wait_count = 0
+    self.prev_scores = {
+      name: float("-inf") * thresh for name, thresh in monitors.items()
+    }
+
+  def _check_early_stopping(self, trainer):
+    num_improved = 0
+    for name, thresh in self.monitors.items():
+      curr_score = trainer.callback_metrics[name].squeeze()
+      is_improved = ((curr_score - self.prev_scores[name]) / thresh) >= 1.0
+      num_improved += bool(is_improved)
+
+    if num_improved >= self.num_required:
+      self.wait_count = 0
+      for name in self.monitors:
+        self.prev_scores[name] = trainer.callback_metrics[name].squeeze()
+    else:
+      self.wait_count += 1
+      if self.wait_count >= self.patience:
+        trainer.should_stop = True
+
+  def on_validation_end(self, trainer, pl_module):
+    self._check_early_stopping(trainer)

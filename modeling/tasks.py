@@ -7,7 +7,7 @@ from torchmetrics import MetricCollection
 from torchmetrics import classification as clf
 from torchmetrics import regression as reg
 
-from .custom import MaskedBinaryAccuracy, MaskedBinaryF1, MyBCELoss
+from .custom import MaskedBinaryF1, MyBCELoss
 
 class BaseTask(ABC, nn.Module):
   def __init__(
@@ -53,11 +53,18 @@ class RationaleTask(BaseTask):
     metrics = MetricCollection({"rationale_f1": MaskedBinaryF1()})
     super().__init__(
       loss_fn = MyBCELoss(freq=config["stats"]["rationale_freq"]),
-      loss_args = ["logits", "trues", "masks"],
       metrics = metrics,
+      loss_args = ["logits", "trues", "masks"],
       metrics_args = ["preds", "hards", "masks"],
+      importance = config["mtl_importances"]["rationale"],
     )
+
     self.head = nn.Linear(config["num_hidden"], 1)
+    # self.head = nn.Sequential(
+    #   nn.Linear(config["num_hidden"], 32),
+    #   nn.ReLU(),
+    #   nn.Linear(32, 1)
+    # )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden).squeeze(-1)
@@ -71,7 +78,7 @@ class RationaleTask(BaseTask):
 
 class TargetTask(BaseTask):
   def __init__(self, config):
-    if config["multitask_targets"]:
+    if config["mtl_expand_targets"]:
       reduce_dim, loss_dim = 0, config["num_target"]
     else:
       reduce_dim, loss_dim = None, 1
@@ -81,15 +88,21 @@ class TargetTask(BaseTask):
         freq = config["stats"]["target_freqs"],
         reduce_dim = reduce_dim
       ),
-      loss_args = ["logits", "trues"],
       metrics = MetricCollection({"target_f1": clf.MultilabelF1Score(
         num_labels=config["num_target"], average="micro",
       )}),
+      loss_args = ["logits", "trues"],
       metrics_args = ["preds", "hards"],
-      importance = 5e0, # TODO
+      importance = config["mtl_importances"]["target"],
       loss_dim = loss_dim,
     )
+
     self.head = nn.Linear(config["num_hidden"], config["num_target"])
+    # self.head = nn.Sequential(
+    #   nn.Linear(config["num_hidden"], 128),
+    #   nn.ReLU(),
+    #   nn.Linear(128, config["num_target"])
+    # )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden[:, 0, :])
@@ -104,13 +117,20 @@ class LabelTask(BaseTask):
   def __init__(self, config):
     super().__init__(
       loss_fn = MyBCELoss(freq=config["stats"]["label_freqs"]),
-      loss_args = ["logits", "trues"],
       metrics = MetricCollection({"label_f1": clf.MulticlassF1Score(
         num_classes=config["num_label"], average="macro",
       )}),
+      loss_args = ["logits", "trues"],
       metrics_args = ["preds", "hards"],
+      importance = config["mtl_importances"]["label"],
     )
+
     self.head = nn.Linear(config["num_hidden"], config["num_label"])
+    # self.head = nn.Sequential(
+    #   nn.Linear(config["num_hidden"], 64),
+    #   nn.ReLU(),
+    #   nn.Linear(64, config["num_label"])
+    # )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden[:, 0, :])
@@ -125,11 +145,18 @@ class ScoreTask(BaseTask):
   def __init__(self, config):
     super().__init__(
       loss_fn = nn.MSELoss(),
-      loss_args = ["preds", "trues"],
       metrics = MetricCollection({"score_mse": reg.MeanSquaredError()}),
+      loss_args = ["preds", "trues"],
       metrics_args = ["preds", "trues"],
+      importance = config["mtl_importances"]["score"],
     )
+
     self.head = nn.Linear(config["num_hidden"], 1)
+    # self.head = nn.Sequential(
+    #   nn.Linear(config["num_hidden"], 64),
+    #   nn.ReLU(),
+    #   nn.Linear(64, 1)
+    # )
 
   def forward(self, hidden, batch):
     return {

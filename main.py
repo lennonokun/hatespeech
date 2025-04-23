@@ -1,37 +1,41 @@
 import warnings
 import argparse
+import subprocess
 
 import torch
 from lightning import Trainer
 from lightning.pytorch.callbacks import RichProgressBar
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, ExplainPreprocessor, MeasuringPreprocessor
-from modeling import HateDatamodule, HateVisualizer
-from modeling.model import HateModule
+from modeling import HateModule, HateDatamodule, HateVisualizer, MultiEarlyStopping
 
 def do_train(config):
   torch.cuda.empty_cache()
   data = HateDatamodule(config)
   module = HateModule(config)
-  
+ 
   trainer_kwargs = {
     "enable_checkpointing": True,
-    "max_epochs": 10,
+    "max_epochs": 20,
     "accelerator": "auto",
     # "gradient_clip_val": 5.0,
     "precision": "bf16-mixed",
-    "logger": TensorBoardLogger("tb_logs", name="hatexplain"),
     "devices": 1,
-    "callbacks": [RichProgressBar(leave=True)]
-      # EarlyStopping(monitor="valid_loss", min_delta=0.05, patience=config["patience"], verbose=True),
+    "callbacks": [
+      MultiEarlyStopping(config["stopping_monitors"], patience=2, num_required=2),
+      RichProgressBar(leave=True)
+    ]
   }
   if config["quick_model"]:
-    trainer_kwargs["limit_train_batches"] = 0.2
+    trainer_kwargs["limit_train_batches"] = 0.01
     trainer_kwargs["limit_val_batches"] = 0.2
+  else:
+    trainer_kwargs["logger"] = MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
 
   trainer = Trainer(**trainer_kwargs)
+  trainer.logger.log_hyperparams(config) # pyright: ignore[reportOptionalMemberAccess]
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
@@ -95,15 +99,34 @@ if __name__ == "__main__":
     "num_hidden": 256,
     "max_length": 128,
     "batch_size": 142,
-    "patience": 3,
-    "learning_rate": 5e-5,
-    "logging": "terminal",
+    "patience": 2,
+    "learning_rate": 2e-5,
+    "adapter_r": 8,
+    "adapter_dropout": 0.1,
     "quick_model": False,
+    # task + dataset selection
+    "active_tasks": {
+      # "explain": ["target", "rationale", "label"],
+      # "measuring": ["score"],
+      "explain": ["target", "label"],
+    },
+    "stopping_monitors": {
+      "valid_target_f1": 0.02,
+      # "valid_rationale_f1": 0.01,
+      "valid_label_f1": 0.01,
+      # "valid_score_mse": -0.01,
+    },
     # MTL + VAT/GAT
-    "num_tasks": 3,
-    "multitask_targets": True,
-    "mtl_norm_initial": True,
-    "mtl_norm_length": 50,
+    "mtl_importances": {
+      "label": 1e0,
+      "target": 1e0,
+      "rationale": 1e0,
+      "score": 2e0,
+    },
+    "mtl_expand_targets": True,
+    "mtl_norm_do": True,
+    "mtl_norm_period": 4,
+    "mtl_norm_length": 8,
     "mtl_weighing": "dwa",
     "mtl_dwa_T": 2.0,
     "vat_epsilon": 0.0,
@@ -114,6 +137,9 @@ if __name__ == "__main__":
   config["cols_target"] = [f"target_{cat}" for cat in config["cats_target"]]
   config["cols_label"] = [f"label_{cat}" for cat in config["cats_label"]]
   config["stats"] = load_stats(config)
+  config["git_commit"] = subprocess.check_output(
+    ['git', 'rev-parse', '--short', 'HEAD']
+  ).decode('ascii').strip()
   
   mode_methods = {
     "fix": do_fix,
