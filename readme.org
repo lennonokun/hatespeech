@@ -1,18 +1,6 @@
-* sketching
-
-model -> task_set -> task -> loss
-            L__________________^
-	   (effectively flattened)
-
-task_sets are mutually exclusive in data, cannot flatten
-should they have a loss coefficient between them?
-should be normalized by number of samples (rescale task_set losses)
-for now give equal weighing, future: try uncertainty weighing?
-
 * todo
 
 ** short-term
-- get multi dataset learning working
 - separate data loading into its own module
 - abstract multi dataset model
 - update readme papers + datasets
@@ -29,10 +17,6 @@ for now give equal weighing, future: try uncertainty weighing?
 ** long term
 - text augmentation
 - use hatebase for lexicon features
-- dataset combination
-  - include dataset origin as input?
-  - ^ could fuzzify it so that it works for general also
-  - ^ could use TaBERT or use as input in classification head
 
 * papers
   - https://bit.kuas.edu.tw/~jni/2024/vol9/s1/36.JNI-S-2023-08-006.pdf
@@ -40,11 +24,15 @@ for now give equal weighing, future: try uncertainty weighing?
   
 * datasets
 
+** using
 - hatexplain
   - pub: https://arxiv.org/pdf/2012.10289.pdf
   - data: https://github.com/punyajoy/HateXplain
   - proportion abusive: 0.57
-  - USING
+- measuring hate speech
+  - data: https://huggingface.co/datasets/ucberkeley-dlab/measuring-hate-speech
+
+** considering
 - large scale crowdsourcing + characterization...
   - pub: https://arxiv.org/pdf/1802.00393.pdf
   - data: https://dataverse.mpi-sws.org/dataset.xhtml?persistentId=doi:10.5072/FK2/ZDTEMN
@@ -62,63 +50,51 @@ for now give equal weighing, future: try uncertainty weighing?
     https://www.kaggle.com/arkhoshghalb/twitter-sentiment-analysis-hatred-speech
   - proportion abusive: 0.07
   - racism/sexism specific
-- measuring hate speech
-  - https://huggingface.co/datasets/ucberkeley-dlab/measuring-hate-speech
 
 * results
 
 ** rolling n=10 normalization + uncertainty weighing + gradient adversarial training
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │    0.5586057305335999     │
-│     test_rationale_f1     │    0.7104283571243286     │
-│      test_target_f1       │    0.6882563233375549     │
-└───────────────────────────┴───────────────────────────┘
+
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.559 |
+| test_rationale_f1 |   0.710 |
+| test_target_f1    |   0.688 |
 
 ** initial n=10 normalization + uncertainty weighing + gradient adversarial training
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │    0.5440879464149475     │
-│     test_rationale_f1     │    0.6091033816337585     │
-│      test_target_f1       │    0.6695500612258911     │
-└───────────────────────────┴───────────────────────────┘
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.544 |
+| test_rationale_f1 |   0.609 |
+| test_target_f1    |   0.669 |
 
 ** initial n=10 norm (broken) + DWA (T=2) + GAT (eps=0.6)
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │    0.5409799814224243     │
-│     test_rationale_f1     │    0.6714811325073242     │
-│      test_target_f1       │    0.6392104625701904     │
-└───────────────────────────┴───────────────────────────┘
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.541 |
+| test_rationale_f1 |   0.671 |
+| test_target_f1    |   0.639 |
 
 ** initial n=10 norm (broken) + DWA (T=2) + 30 epochs
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │    0.5729119777679443     │
-│     test_rationale_f1     │    0.7984278202056885     │
-│      test_target_f1       │     0.704976499080658     │
-└───────────────────────────┴───────────────────────────┘
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.572 |
+| test_rationale_f1 |   0.798 |
+| test_target_f1    |   0.705 |
 
 ** initial n=10 norm (fixed) + RW + 10 epochs + r=8 + layers=2
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │    0.5959147810935974     │
-│     test_rationale_f1     │    0.6037663817405701     │
-│      test_score_mse       │    2.0311996936798096     │
-│      test_target_f1       │    0.7122450470924377     │
-└───────────────────────────┴───────────────────────────┘
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.592 |
+| test_rationale_f1 |   0.604 |
+| test_score_mse    |   2.031 |
+| test_target_f1    |   0.712 |
 
 ** initial n=10 norm (fixed) + RW + 20 epochs + r=8 + layers=2
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        Test metric        ┃       DataLoader 0        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       test_label_f1       │     0.610170841217041     │
-│     test_rationale_f1     │    0.6598011255264282     │
-│      test_score_mse       │    1.9366915225982666     │
-│      test_target_f1       │    0.7209393382072449     │
-└───────────────────────────┴───────────────────────────┘
+
+| metrics           | results |
+|-------------------+---------|
+| test_label_f1     |   0.610 |
+| test_rationale_f1 |   0.659 |
+| test_score_mse    |   1.936 |
+| test_target_f1    |   0.721 |
