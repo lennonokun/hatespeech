@@ -10,9 +10,16 @@ from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, ExplainPreprocessor, MeasuringPreprocessor
 from modeling import HateModule, HateDatamodule, HateVisualizer, MultiEarlyStopping
+# from modeling import HateMTLLora
 
 def do_train(config):
   torch.cuda.empty_cache()
+  # if config["mtl_lora"]:
+  #   data = HateDatamodule(config, "task")
+  #   module = HateMTLLora(config)
+  # else:
+  #   data = HateDatamodule(config, "dataset")
+  #   module = HateModule(config)
   data = HateDatamodule(config)
   module = HateModule(config)
  
@@ -29,7 +36,7 @@ def do_train(config):
     ]
   }
   if config["quick_model"]:
-    trainer_kwargs["limit_train_batches"] = 0.01
+    trainer_kwargs["limit_train_batches"] = 0.2
     trainer_kwargs["limit_val_batches"] = 0.2
   else:
     trainer_kwargs["logger"] = MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
@@ -40,7 +47,7 @@ def do_train(config):
   trainer.test(module, datamodule=data)
 
 def do_test(config):
-  data = HateDatamodule(config)
+  data = HateDatamodule(config, "dataset")
   module = HateModule.load_from_checkpoint(
     config["best_model"],
     map_location=torch.device("cuda"),
@@ -99,16 +106,17 @@ if __name__ == "__main__":
     "num_hidden": 256,
     "max_length": 128,
     "batch_size": 142,
-    "patience": 2,
-    "learning_rate": 2e-5,
-    "adapter_r": 8,
-    "adapter_dropout": 0.1,
+    "patience": 4,
+    "learning_rate": 5e-5,
+    "adapter_r": 16,
+    "adapter_dropout": 0.05,
     "quick_model": False,
     # task + dataset selection
+    "features": ["tokens", "mask"],
     "active_tasks": {
-      # "explain": ["target", "rationale", "label"],
+      "explain": ["target", "rationale", "label"],
       # "measuring": ["score"],
-      "explain": ["target", "label"],
+      # "explain": ["target", "label"],
     },
     "stopping_monitors": {
       "valid_target_f1": 0.02,
@@ -117,6 +125,7 @@ if __name__ == "__main__":
       # "valid_score_mse": -0.01,
     },
     # MTL + VAT/GAT
+    "mtl_lora": False,
     "mtl_importances": {
       "label": 1e0,
       "target": 1e0,
@@ -132,6 +141,15 @@ if __name__ == "__main__":
     "vat_epsilon": 0.0,
   }
   # more data
+  config["melt_pairs"] = [
+    (dataset, task)
+    for dataset, tasks in config["active_tasks"].items()
+    for task in tasks
+  ]
+  config["melt_tasks"] = [task for _, task in config["melt_pairs"]]
+  config["melt_datasets"] = [dataset for dataset, _ in config["melt_pairs"]]
+  config["flat_datasets"] = [dataset for dataset in config["active_tasks"].keys()]
+  # config["flat_tasks"] = [task for tasks in config["active_datasets"] for task in tasks]
   config["num_target"] = len(config["cats_target"])
   config["num_label"] = len(config["cats_label"])
   config["cols_target"] = [f"target_{cat}" for cat in config["cats_target"]]
@@ -140,7 +158,7 @@ if __name__ == "__main__":
   config["git_commit"] = subprocess.check_output(
     ['git', 'rev-parse', '--short', 'HEAD']
   ).decode('ascii').strip()
-  
+
   mode_methods = {
     "fix": do_fix,
     "preprocess": do_preprocess,
