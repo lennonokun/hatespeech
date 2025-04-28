@@ -5,19 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "accelerate>=1.6.0",
-    "adapters>=1.1.1",
-    "lightning[extra]>=2.5.0.post0",
-    "mlflow>=2.21.3",
-    "nltk>=3.9.1",
-    "numpy<2.0",
-    "pandas>=2.2.3",
-    "pyarrow>=11.0.0",
-    "pyspark>=3.5.5",
-    "torch>=2.5.1",
-    "torchinfo>=1.8.0",
-    "torchmetrics>=1.6.1",
-    "transformers>=4.47.1",
+	"accelerate>=1.6.0",
+	# "adapters>=1.1.1",
+	"adapters@git+https://github.com/adapter-hub/adapters",
+	"lightning[extra]>=2.5.0.post0",
+	"mlflow>=2.21.3",
+	"nltk>=3.9.1",
+	"numpy<2.0",
+	"pandas>=2.2.3",
+	"pyarrow>=11.0.0",
+	"pyspark>=3.5.5",
+	"torch>=2.5.1",
+	"torchinfo>=1.8.0",
+	"torchmetrics>=1.6.1",
+	"transformers>=4.47.1",
 ]
 
 [dependency-groups]

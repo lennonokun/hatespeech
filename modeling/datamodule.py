@@ -1,26 +1,25 @@
 from typing import *
-from collections import OrderedDict
 
 import numpy as np
-from lightning import LightningDataModule
+import pandas as pd
+import torch
 
+from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import BatchSampler, RandomSampler
-import pyarrow.parquet as pq
 
 # TODO shared feature
 # batch sampled
-class CombinedDataset(Dataset):
-  def __init__(self, named_datasets):
-    self.names = list(named_datasets.keys())
-    self.datasets = [named_datasets[name] for name in self.names]
+class DatasetCombinedDataset(Dataset):
+  def __init__(self, config, datasets):
+    self.names = list(datasets.keys())
+    self.datasets = [datasets[name] for name in self.names]
     self.num_datasets = len(self.datasets)
     # self.features = features
 
     lengths = np.array([len(dataset) for dataset in self.datasets])
     self.length = np.sum(lengths)
     self.offsets = np.cumsum(lengths) - lengths
-    self.groups = np.arange(len(self.datasets))
 
   def __len__(self):
     return self.length
@@ -32,13 +31,56 @@ class CombinedDataset(Dataset):
     name_idx = (self.num_datasets - 1) - name_reverse_idx
 
     # group batches 
-    # out_features = []
     out = {}
     for i in range(self.num_datasets):
       curr_name_idx = np.where(name_idx == i)[0]
       dataset_idx = diffs[curr_name_idx, i]
       out[self.names[i]] = self.datasets[i][dataset_idx]
     return out
+
+class TaskCombinedDataset(Dataset):
+  def __init__(self, config, datasets):
+    self.config = config
+    self.datasets = datasets
+
+    lengths = np.array([len(datasets[name]) for name in config["melt_datasets"]])
+    self.length = np.sum(lengths)
+    self.offsets = np.cumsum(lengths) - lengths
+
+  def __len__(self):
+    return self.length
+
+  def __getitem__(self, idx):
+    # get indices per name
+    diffs = np.array(idx)[:, None] - self.offsets[None, :]
+    name_reverse_idx = np.argmax(diffs[:, ::-1] >= 0, axis=1)
+    name_idx = (len(self.config["melt_tasks"]) - 1) - name_reverse_idx
+
+    features = {feature: [] for feature in self.config["features"]}
+    labels = {}
+    for i, (dataset, task) in enumerate(self.config["melt_pairs"]):
+      curr_name_idx = np.where(name_idx == i)[0]
+      dataset_idx = diffs[curr_name_idx, i]
+      rows = self.datasets[dataset][dataset_idx]
+
+      try:
+        for feature in self.config["features"]:
+          features[feature].append(rows[feature])
+      except:
+        print(f"{list(rows.keys)}=")
+        print(f"{self.config['features']}")
+        raise RuntimeError
+      labels[task] = rows[task]
+
+    # TODO generalize
+    max_tokens = max(x.shape[1] for x in features["tokens"])
+    features_padded = {}
+    for feature in self.config["features"]:
+      values = features[feature]
+      paddeds = [np.pad(x, ((0, 0), (0, max_tokens-x.shape[1]))) for x in values]
+      features_padded[feature] = np.concatenate(paddeds)
+
+    return features_padded, labels, name_idx
   
 # batch sampled
 class HateDataset(Dataset):
@@ -46,7 +88,7 @@ class HateDataset(Dataset):
     self.config = config
     
     path = self.config["output_dataset_path"].format(name=name, split=split)
-    self.df = pq.ParquetDataset(path).read().to_pandas()
+    self.df = pd.read_parquet(path)
 
     self.locs = {}
     for var in multis:
@@ -131,15 +173,21 @@ class HateDatamodule(LightningDataModule):
     "explain": ExplainDataset,
     "measuring": MeasuringDataset,
   }
+  _combine_constructors = {
+    "dataset": DatasetCombinedDataset,
+    "task": TaskCombinedDataset,
+  }
 
-  def __init__(self, config):
+  def __init__(self, config, method):
     super().__init__()
     self.config = config
+    self.method = method
   
   def _select_data(self, split):
-    dataset = CombinedDataset({
+    combiner = self._combine_constructors[self.method]
+    dataset = combiner(self.config, {
       name: self._constructors[name](self.config, split)
-      for name in self.config["active_tasks"]
+      for name in self.config["flat_datasets"]
     })
     sampler = BatchSampler(
       RandomSampler(dataset),
@@ -147,7 +195,6 @@ class HateDatamodule(LightningDataModule):
       drop_last=False
     )
     return dataset, sampler
-                  
   
   def setup(self, stage: str):
     self.datasets = {}

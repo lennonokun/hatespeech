@@ -10,18 +10,16 @@ from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, ExplainPreprocessor, MeasuringPreprocessor
 from modeling import HateModule, HateDatamodule, HateVisualizer, MultiEarlyStopping
-# from modeling import HateMTLLora
+from modeling import HateMTLLora
 
 def do_train(config):
   torch.cuda.empty_cache()
-  # if config["mtl_lora"]:
-  #   data = HateDatamodule(config, "task")
-  #   module = HateMTLLora(config)
-  # else:
-  #   data = HateDatamodule(config, "dataset")
-  #   module = HateModule(config)
-  data = HateDatamodule(config)
-  module = HateModule(config)
+  if config["mtl_lora"]:
+    data = HateDatamodule(config, "task")
+    module = HateMTLLora(config)
+  else:
+    data = HateDatamodule(config, "dataset")
+    module = HateModule(config)
  
   trainer_kwargs = {
     "enable_checkpointing": True,
@@ -31,7 +29,7 @@ def do_train(config):
     "precision": "bf16-mixed",
     "devices": 1,
     "callbacks": [
-      MultiEarlyStopping(config["stopping_monitors"], patience=2, num_required=2),
+      MultiEarlyStopping(config["stopping_monitors"], patience=config["patience"], num_required=1),
       RichProgressBar(leave=True)
     ]
   }
@@ -105,24 +103,24 @@ if __name__ == "__main__":
     "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
     "num_hidden": 256,
     "max_length": 128,
-    "batch_size": 142,
-    "patience": 4,
-    "learning_rate": 5e-5,
+    "batch_size": 200,
+    "patience": 3,
+    "learning_rate": 2e-4,
     "adapter_r": 16,
-    "adapter_dropout": 0.05,
+    # "adapter_dropout": 0.05,
     "quick_model": False,
     # task + dataset selection
     "features": ["tokens", "mask"],
     "active_tasks": {
-      "explain": ["target", "rationale", "label"],
+      "explain": ["target", "label"],
       # "measuring": ["score"],
       # "explain": ["target", "label"],
     },
     "stopping_monitors": {
       "valid_target_f1": 0.02,
       # "valid_rationale_f1": 0.01,
-      "valid_label_f1": 0.01,
-      # "valid_score_mse": -0.01,
+      "valid_label_f1": 0.005,
+      # "valid_score_mse": -0.03,
     },
     # MTL + VAT/GAT
     "mtl_lora": False,

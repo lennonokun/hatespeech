@@ -59,12 +59,14 @@ class RationaleTask(BaseTask):
       importance = config["mtl_importances"]["rationale"],
     )
 
-    self.head = nn.Linear(config["num_hidden"], 1)
-    # self.head = nn.Sequential(
-    #   nn.Linear(config["num_hidden"], 32),
-    #   nn.ReLU(),
-    #   nn.Linear(32, 1)
-    # )
+    # self.head = nn.Linear(config["num_hidden"], 1)
+    self.head = nn.Sequential(
+      nn.Linear(config["num_hidden"], 32),
+      nn.ReLU(),
+      nn.Linear(32, 32),
+      nn.ReLU(),
+      nn.Linear(32, 1)
+    )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden).squeeze(-1)
@@ -97,12 +99,14 @@ class TargetTask(BaseTask):
       loss_dim = loss_dim,
     )
 
-    self.head = nn.Linear(config["num_hidden"], config["num_target"])
-    # self.head = nn.Sequential(
-    #   nn.Linear(config["num_hidden"], 128),
-    #   nn.ReLU(),
-    #   nn.Linear(128, config["num_target"])
-    # )
+    # self.head = nn.Linear(config["num_hidden"], config["num_target"])
+    self.head = nn.Sequential(
+      nn.Linear(config["num_hidden"], 128),
+      nn.ReLU(),
+      nn.Linear(128, 64),
+      nn.ReLU(),
+      nn.Linear(64, config["num_target"])
+    )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden[:, 0, :])
@@ -125,12 +129,14 @@ class LabelTask(BaseTask):
       importance = config["mtl_importances"]["label"],
     )
 
-    self.head = nn.Linear(config["num_hidden"], config["num_label"])
-    # self.head = nn.Sequential(
-    #   nn.Linear(config["num_hidden"], 64),
-    #   nn.ReLU(),
-    #   nn.Linear(64, config["num_label"])
-    # )
+    # self.head = nn.Linear(config["num_hidden"], config["num_label"])
+    self.head = nn.Sequential(
+      nn.Linear(config["num_hidden"], 64),
+      nn.ReLU(),
+      nn.Linear(64, 32),
+      nn.ReLU(),
+      nn.Linear(32, config["num_label"])
+    )
 
   def forward(self, hidden, batch):
     logits = self.head(hidden[:, 0, :])
@@ -151,15 +157,32 @@ class ScoreTask(BaseTask):
       importance = config["mtl_importances"]["score"],
     )
 
-    self.head = nn.Linear(config["num_hidden"], 1)
-    # self.head = nn.Sequential(
-    #   nn.Linear(config["num_hidden"], 64),
-    #   nn.ReLU(),
-    #   nn.Linear(64, 1)
-    # )
+    # self.head = nn.Linear(config["num_hidden"], 1)
+    self.head = nn.Sequential(
+      nn.Linear(config["num_hidden"], 64),
+      nn.ReLU(),
+      nn.Linear(64, 32),
+      nn.ReLU(),
+      nn.Linear(32, 1)
+    )
 
   def forward(self, hidden, batch):
     return {
       "preds": self.head(hidden[:, 0, :]).squeeze(-1),
       "trues": batch["score"],
     }
+
+_constructors = {
+  "target": TargetTask,
+  "rationale": RationaleTask,
+  "label": LabelTask,
+  "score": ScoreTask,
+}
+
+def construct_tasks(config):
+  out = {}
+  for name in config["melt_tasks"]:
+    if name not in _constructors:
+      raise ValueError(f"invalid element of config['melt_tasks']: {name}")
+    out[name] = _constructors[name](config)
+  return out
