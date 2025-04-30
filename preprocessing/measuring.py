@@ -1,22 +1,17 @@
-import pprint
-
-from pyspark.sql import functions as F, types as T
-
-from typing import *
-from nltk.tokenize.treebank import TreebankWordDetokenizer
-from transformers import AutoTokenizer
+from pyspark.sql import functions as F
 
 from . import utils
 from .preprocessor import Preprocessor
 
 class MeasuringPreprocessor(Preprocessor):
+  name = "measuring"
+  
   def __init__(self, config):
-    super().__init__(config, "measuring")
+    super().__init__(config)
     self.config = config
     self.pudf_tokenize = utils.pudf_tokenize(config)
   
   def preprocess(self, df):
-    # pprint.pp(df.columns)
     df = df.groupBy("comment_id") \
       .agg(F.avg("hate_speech_score").alias("score"), F.first("text").alias("text"))
 
@@ -28,5 +23,4 @@ class MeasuringPreprocessor(Preprocessor):
     return df
 
   def get_stats(self, df):
-    return {
-    }
+    return {}

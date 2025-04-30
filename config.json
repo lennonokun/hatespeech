@@ -1,0 +1,66 @@
+{
+	// data misc
+	"cats_target": [
+		"African", "Arab", "Asian", "Caucasian", "Hispanic",
+		"Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
+	],
+	"cats_label": ["hatespeech", "offensive", "normal"],
+	"round_train": ["target", "label", "rationale"],
+	"tokenize_batch_size": 64,
+	// preprocessing paths
+	"explain_dirty_path": "data/explain/dirty.json",
+	"input_dataset_path": "data/{name}/input.parquet",
+	"output_dataset_path": "data/{name}/output_{split}.parquet",
+	"output_stats_path": "data/{name}/stats.json",
+	// modeling misc
+	"max_length": 128,
+	"best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
+
+	// "model": "google/electra-base-discriminator",
+	// "num_hidden": 768,
+	// "batch_size": 64,
+
+	"model": "google/electra-small-discriminator",
+	"num_hidden": 256,
+	"batch_size": 200,
+
+	"patience": 3,
+	"learning_rate": 5e-4,
+	"adapter_r": 16,
+	"heads": {
+		"label": [64, 64, 32, 3],
+		"target": [128, 128, 64, 11],
+		"rationale": [64, 64, 32, 1],
+		"score": [128, 128, 64, 1],
+	},
+	"adapter_dropout": 0.05,
+	"quick_model": false,
+	// task + dataset selection
+	"features": ["tokens", "mask"],
+	"active_tasks": {
+		"explain": ["target", "label", "rationale",],
+		// "measuring": ["score"],
+		// "explain": ["target", "label"],
+	},
+	"stopping_monitors": {
+		"valid_target_f1": 0.02,
+		// "valid_rationale_f1": 0.01,
+		"valid_label_f1": 0.005,
+		// "valid_score_mse": -0.03,
+	},
+	// MTL + VAT/GAT
+	"mtl_lora": false,
+	"mtl_importances": {
+		"label": 1e0,
+		"target": 1e0,
+		"rationale": 1e0,
+		"score": 2e0,
+	},
+	"mtl_expand_targets": true,
+	"mtl_norm_do": true,
+	"mtl_norm_period": 4,
+	"mtl_norm_length": 8,
+	"mtl_weighing": "dwa",
+	"mtl_dwa_T": 2.0,
+	"vat_epsilon": 0.0,
+}

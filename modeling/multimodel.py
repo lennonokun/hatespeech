@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
+import gc
 
+import torch
+import numpy as np
 from torch import nn
 
 from lightning import LightningModule
@@ -39,7 +42,14 @@ class BaseMultiModel(ABC, LightningModule):
 
       metricss[task_name], losses[task_name] = task.compute(hidden, batch, split)
       batch_sizes[task_name] = batch_size
-    
+
+
+    loss_counts = torch.Tensor(np.concatenate([
+      np.full(self.tasks[name].loss_dim, batch_sizes[name])
+      for name in self.config["melt_tasks"]
+    ], axis=0)).cuda()
+    loss_weights = loss_counts / loss_counts.mean()
+      
     log_kwargs = {"prog_bar": split == "test", "on_epoch": True, "on_step": False}
     # log metrics
     for name, metrics in metricss.items():
@@ -48,16 +58,15 @@ class BaseMultiModel(ABC, LightningModule):
     # log losses
     if split != "test":
       for name, loss in losses.items():
-        b_size = batch_sizes[name]
-        if loss.dim() == 0:
-          self.log(f"{split}_{name}_loss", loss, batch_size=b_size, **log_kwargs)
-        elif loss.dim() == 1:
-          for i, sub_loss in enumerate(loss):
-            self.log(f"{split}_{name}_loss_{i}", sub_loss, batch_size=b_size, **log_kwargs)
+        loss = loss.cpu().detach().numpy()
+        for idx, val in np.ndenumerate(loss):
+          str_idx = '_'.join(str(x) for x in idx)
+          log_name = f"{split}_{name}_loss_{str_idx}"
+          self.log(log_name, val, batch_size=batch_sizes[name], **log_kwargs)
 
     # ensure that order is consistent
     losses = [losses[task_name] for task_name in self.config["melt_tasks"]]
-    return self.mtl_loss(losses, self.norm_layers, split)
+    return self.mtl_loss(losses, self.norm_layers, loss_weights, split)
     
   def training_step(self, batch):
     return self.split_step(batch, "train")

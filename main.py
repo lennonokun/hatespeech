@@ -1,6 +1,7 @@
 import warnings
 import argparse
 import subprocess
+import pyjson5
 
 import torch
 from lightning import Trainer
@@ -8,13 +9,15 @@ from lightning.pytorch.callbacks import RichProgressBar
 from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
-from preprocessing import load_stats, do_fix, ExplainPreprocessor, MeasuringPreprocessor
-from modeling import HateModule, HateDatamodule, HateVisualizer, MultiEarlyStopping
+from preprocessing import load_stats, do_fix, construct_preprocessor
+from modeling import HateModule, HateDatamodule, MultiEarlyStopping
 from modeling import HateMTLLora
 
-def do_train(config):
+def do_train(args):
+  config = args.config
+
   torch.cuda.empty_cache()
-  if config["mtl_lora"]:
+  if args.mtllora:
     data = HateDatamodule(config, "task")
     module = HateMTLLora(config)
   else:
@@ -23,7 +26,7 @@ def do_train(config):
  
   trainer_kwargs = {
     "enable_checkpointing": True,
-    "max_epochs": 20,
+    "max_epochs": 25,
     "accelerator": "auto",
     # "gradient_clip_val": 5.0,
     "precision": "bf16-mixed",
@@ -44,7 +47,9 @@ def do_train(config):
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
 
-def do_test(config):
+def do_test(args):
+  config = args.config
+  
   data = HateDatamodule(config, "dataset")
   module = HateModule.load_from_checkpoint(
     config["best_model"],
@@ -58,87 +63,16 @@ def do_test(config):
 
   trainer.test(module, datamodule=data)
 
-def do_load(config):
-  data = HateDatamodule(config)
+def do_load(args):
+  data = HateDatamodule(args.method, args.config)
   data.setup("")
 
-def do_preprocess(config):
-  preprocessor = ExplainPreprocessor(config)
+def do_preprocess(args):
+  preprocessor = construct_preprocessor(args.config, args.name)
   preprocessor.execute()
 
-def do_preprocess2(config):
-  preprocessor = MeasuringPreprocessor(config)
-  preprocessor.execute()
-  
-def do_visualize(config):
-  visualizer = HateVisualizer(config)
-  visualizer.visualize_dataset()
-  # visualizer.visualize_repl()
-
-if __name__ == "__main__":
-  parser = argparse.ArgumentParser("hatespeech")
-  parser.add_argument("mode", type=str)
-  args = parser.parse_args()
-
-  # os.environ["TOKENIZERS_PARALLELISM"] = "false"
-  torch.set_float32_matmul_precision("medium")
-  warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
-
-  config = {
-    # data misc
-    "cats_target": [
-      "African", "Arab", "Asian", "Caucasian", "Hispanic",
-      "Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
-    ],
-    "cats_label": ["hatespeech", "offensive", "normal"],
-    "round_train": ["target", "label", "rationale"],
-    "tokenize_batch_size": 64,
-    # preprocessing paths
-    "explain_dirty_path": "data/explain/dirty.json",
-    "input_dataset_path": "data/{name}/input.parquet",
-    "output_dataset_path": "data/{name}/output_{split}.parquet",
-    "output_stats_path": "data/{name}/stats.json",
-    # modeling misc
-    "model": "google/electra-small-discriminator",
-    "best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
-    "num_hidden": 256,
-    "max_length": 128,
-    "batch_size": 200,
-    "patience": 3,
-    "learning_rate": 2e-4,
-    "adapter_r": 16,
-    # "adapter_dropout": 0.05,
-    "quick_model": False,
-    # task + dataset selection
-    "features": ["tokens", "mask"],
-    "active_tasks": {
-      "explain": ["target", "label"],
-      # "measuring": ["score"],
-      # "explain": ["target", "label"],
-    },
-    "stopping_monitors": {
-      "valid_target_f1": 0.02,
-      # "valid_rationale_f1": 0.01,
-      "valid_label_f1": 0.005,
-      # "valid_score_mse": -0.03,
-    },
-    # MTL + VAT/GAT
-    "mtl_lora": False,
-    "mtl_importances": {
-      "label": 1e0,
-      "target": 1e0,
-      "rationale": 1e0,
-      "score": 2e0,
-    },
-    "mtl_expand_targets": True,
-    "mtl_norm_do": True,
-    "mtl_norm_period": 4,
-    "mtl_norm_length": 8,
-    "mtl_weighing": "dwa",
-    "mtl_dwa_T": 2.0,
-    "vat_epsilon": 0.0,
-  }
-  # more data
+def load_config():
+  config = pyjson5.decode_io(open("config.json", "r")) # pyright: ignore
   config["melt_pairs"] = [
     (dataset, task)
     for dataset, tasks in config["active_tasks"].items()
@@ -147,7 +81,6 @@ if __name__ == "__main__":
   config["melt_tasks"] = [task for _, task in config["melt_pairs"]]
   config["melt_datasets"] = [dataset for dataset, _ in config["melt_pairs"]]
   config["flat_datasets"] = [dataset for dataset in config["active_tasks"].keys()]
-  # config["flat_tasks"] = [task for tasks in config["active_datasets"] for task in tasks]
   config["num_target"] = len(config["cats_target"])
   config["num_label"] = len(config["cats_label"])
   config["cols_target"] = [f"target_{cat}" for cat in config["cats_target"]]
@@ -156,17 +89,31 @@ if __name__ == "__main__":
   config["git_commit"] = subprocess.check_output(
     ['git', 'rev-parse', '--short', 'HEAD']
   ).decode('ascii').strip()
+  return config
 
-  mode_methods = {
-    "fix": do_fix,
-    "preprocess": do_preprocess,
-    "preprocess2": do_preprocess2,
-    "train": do_train,
-    "load": do_load,
-    "visualize": do_visualize,
-  }
+if __name__ == "__main__":
+  # os.environ["TOKENIZERS_PARALLELISM"] = "false"
+  torch.set_float32_matmul_precision("medium")
+  warnings.filterwarnings('ignore', message=EPOCH_DEPRECATION_WARNING[:10], category=UserWarning)
 
-  if current_method := mode_methods.get(args.mode):
-    current_method(config)
-  else:
-    print(f"Invalid mode '{args.mode}'")
+  parser = argparse.ArgumentParser("hatespeech")
+  parser.add_argument("--config", default=load_config())
+  subparsers = parser.add_subparsers()
+
+  parser_fix = subparsers.add_parser("fix")
+  parser_fix.set_defaults(func=do_fix)
+
+  parser_train = subparsers.add_parser("train")
+  parser_train.add_argument("-m", "--mtllora", action="store_true")
+  parser_train.set_defaults(func=do_train)
+
+  parser_load = subparsers.add_parser("load")
+  parser_load.add_argument("method", type=str)
+  parser_load.set_defaults(func=do_load)
+
+  parser_preprocess = subparsers.add_parser("preprocess")
+  parser_preprocess.add_argument("dataset", type=str)
+  parser_preprocess.set_defaults(func=do_preprocess)
+
+  args = parser.parse_args()
+  args.func(args)

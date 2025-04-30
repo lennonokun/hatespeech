@@ -1,10 +1,8 @@
 from typing import *
 
 import json
-
 from pyspark import SparkContext
 from pyspark.sql import functions as F, types as T
-
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 from . import utils
@@ -39,11 +37,12 @@ def do_fix(config):
   df.write.mode("overwrite").parquet(path)
 
 class ExplainPreprocessor(Preprocessor):
+  name = "explain"
+  
   def __init__(self, config):
-    super().__init__(config, "explain")
+    super().__init__(config)
 
     self.detokenizer = TreebankWordDetokenizer()
-
     self.udf_detokenize = self._udf_detokenize(self.detokenizer)
     self.pudf_tokenize = utils.pudf_tokenize(config)
 

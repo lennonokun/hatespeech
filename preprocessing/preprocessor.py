@@ -1,17 +1,23 @@
-import json
+from abc import ABC, abstractmethod
+from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
 
+import json
 from pyspark.sql import functions as F
 
 from . import utils
 
-class Preprocessor:
-  def __init__(self, config, name):
+class Preprocessor(ABC):
+  name: ClassVar[str]
+  
+  def __init__(self, config):
+    super().__init__()
     self.config = config
-    self.name = name
 
+  @abstractmethod
   def preprocess(self, df):
     raise NotImplementedError
 
+  @abstractmethod
   def get_stats(self, df):
     raise NotImplementedError
 
