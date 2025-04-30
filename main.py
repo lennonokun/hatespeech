@@ -10,19 +10,18 @@ from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, construct_preprocessor
-from modeling import HateModule, HateDatamodule, MultiEarlyStopping
-from modeling import HateMTLLora
+from modeling import StandardModel, MTLLoraModel, HateDatamodule, MultiEarlyStopping
 
 def do_train(args):
   config = args.config
 
   torch.cuda.empty_cache()
-  if args.mtllora:
+  if config["mtllora"]:
     data = HateDatamodule(config, "task")
-    module = HateMTLLora(config)
+    module = MTLLoraModel(config)
   else:
     data = HateDatamodule(config, "dataset")
-    module = HateModule(config)
+    module = StandardModel(config)
  
   trainer_kwargs = {
     "enable_checkpointing": True,
@@ -48,20 +47,27 @@ def do_train(args):
   trainer.test(module, datamodule=data)
 
 def do_test(args):
-  config = args.config
+  pass
+  # config = args.config
   
-  data = HateDatamodule(config, "dataset")
-  module = HateModule.load_from_checkpoint(
-    config["best_model"],
-    map_location=torch.device("cuda"),
-  )
-  trainer = Trainer(
-    accelerator="auto",
-    precision="bf16-mixed",
-    devices=1,
-  )
+  # if config["mtllora"]:
+  #   data = HateDatamodule(config, "task")
+  #   module_class = MTLLoraModel
+  # else:
+  #   data = HateDatamodule(config, "dataset")
+  #   module_class = StandardModel
+  # module = module_class.load_from_checkpoint(
+  #   config["best_model"],
+  #   map_location=torch.device("cuda"),
+  # )
 
-  trainer.test(module, datamodule=data)
+  # trainer = Trainer(
+  #   accelerator="auto",
+  #   precision="bf16-mixed",
+  #   devices=1,
+  # )
+
+  # trainer.test(module, datamodule=data)
 
 def do_load(args):
   data = HateDatamodule(args.method, args.config)

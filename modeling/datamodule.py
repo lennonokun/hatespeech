@@ -31,12 +31,13 @@ class DatasetCombinedDataset(Dataset):
     name_idx = (self.num_datasets - 1) - name_reverse_idx
 
     # group batches 
-    out = {}
+    batches = {}
     for i in range(self.num_datasets):
       curr_name_idx = np.where(name_idx == i)[0]
       dataset_idx = diffs[curr_name_idx, i]
-      out[self.names[i]] = self.datasets[i][dataset_idx]
-    return out
+      batches[self.names[i]] = self.datasets[i][dataset_idx]
+      batches[self.names[i]]["size"] = len(dataset_idx)
+    return batches
 
 class TaskCombinedDataset(Dataset):
   def __init__(self, config, datasets):
@@ -56,31 +57,17 @@ class TaskCombinedDataset(Dataset):
     name_reverse_idx = np.argmax(diffs[:, ::-1] >= 0, axis=1)
     name_idx = (len(self.config["melt_tasks"]) - 1) - name_reverse_idx
 
-    features = {feature: [] for feature in self.config["features"]}
-    labels = {}
+    batches = {task: {} for task in self.config["melt_tasks"]}
     for i, (dataset, task) in enumerate(self.config["melt_pairs"]):
       curr_name_idx = np.where(name_idx == i)[0]
       dataset_idx = diffs[curr_name_idx, i]
       rows = self.datasets[dataset][dataset_idx]
 
-      try:
-        for feature in self.config["features"]:
-          features[feature].append(rows[feature])
-      except:
-        print(f"{list(rows.keys)}=")
-        print(f"{self.config['features']}")
-        raise RuntimeError
-      labels[task] = rows[task]
-
-    # TODO generalize
-    max_tokens = max(x.shape[1] for x in features["tokens"])
-    features_padded = {}
-    for feature in self.config["features"]:
-      values = features[feature]
-      paddeds = [np.pad(x, ((0, 0), (0, max_tokens-x.shape[1]))) for x in values]
-      features_padded[feature] = np.concatenate(paddeds)
-
-    return features_padded, labels, name_idx
+      for feature in self.config["features"]:
+        batches[task][feature] = rows[feature]
+      batches[task][task] = rows[task]
+      batches[task]["size"] = len(dataset_idx)
+    return batches
   
 # batch sampled
 class HateDataset(Dataset):

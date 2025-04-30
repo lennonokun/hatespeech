@@ -23,7 +23,7 @@
 	"model": "google/electra-small-discriminator",
 	"num_hidden": 256,
 	"batch_size": 200,
-
+	"mtllora": false,
 	"patience": 3,
 	"learning_rate": 5e-4,
 	"adapter_r": 16,
@@ -49,7 +49,6 @@
 		// "valid_score_mse": -0.03,
 	},
 	// MTL + VAT/GAT
-	"mtl_lora": false,
 	"mtl_importances": {
 		"label": 1e0,
 		"target": 1e0,

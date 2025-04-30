@@ -61,7 +61,7 @@ class MTLLoss(ABC, nn.Module):
   def forward(self, losses, norm_layers, external_weights, split):
     losses = torch.cat([torch.atleast_1d(loss) for loss in losses], dim=0)
     external_weights *= self.loss_importances
-    if self.grad_norm is not None:
+    if self.grad_norm is not None and norm_layers is not None:
       external_weights *= self.grad_norm(losses, norm_layers, split)
 
     return self.compute_loss(losses, external_weights, split)

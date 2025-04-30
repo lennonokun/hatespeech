@@ -1,13 +1,8 @@
 * notes
-- why is the it/s slowing down?
-  - takes a bit but slows after around 10 epochs
-  - doesnt seem to be mtl_loss
 - layernorm seems to help a lot
 - lora dropout maybe also
 - rationale seems to get stuck at 0.6 f1?
-- now that the adapters actually work:
-  - target is learning much slower it seems
-  - probably heads should have their own learning rate?
+- probably heads should have their own learning rate?
 
 * todo
 
@@ -15,7 +10,6 @@
 - WEIGH TASKS SEPARATELY BY TOTAL FREQUENCY
 - task batches should include all dataset labels
 - separate data loading into its own module
-- abstract multi dataset model
 - update readme papers + datasets
 
 ** medium-term
