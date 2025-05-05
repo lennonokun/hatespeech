@@ -17,6 +17,9 @@ class StandardModel(BaseModel):
     self.model.add_adapter("my_adapter", config=LoRAConfig(
       r=config["adapter_r"],
       dropout=config["adapter_dropout"],
+      vera_d=config["adapter_d"],
+      vera_b=config["adapter_b"],
+      # leave_out=[0,1],
     ))
     self.model.set_active_adapters("my_adapter")
     self.model.train_adapter("my_adapter")

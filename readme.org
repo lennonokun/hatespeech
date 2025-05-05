@@ -3,10 +3,14 @@
 - lora dropout maybe also
 - rationale seems to get stuck at 0.6 f1?
 - probably heads should have their own learning rate?
+- check mtl_importances working
+- check if can do branching adapters with LoraConfig leave_out
+- reconsider quantization
 
 * todo
 
 ** short-term
+- re-add VAT
 - WEIGH TASKS SEPARATELY BY TOTAL FREQUENCY
 - task batches should include all dataset labels
 - separate data loading into its own module

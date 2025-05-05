@@ -181,7 +181,7 @@ class ScoreTask(BaseTask):
       "trues": batch["score"],
     }
 
-_constructors_list = [
+_constructors_list: List[BaseTask] = [
   TargetTask,
   RationaleTask,
   LabelTask,
@@ -192,9 +192,12 @@ _constructors_dict = {
 }
 
 def construct_tasks(config):
-  out = {}
+  out: Dict[str, BaseTask] = {}
   for name in config["melt_tasks"]:
-    if name not in _constructors_dict:
+    constructor = _constructors_dict.get(name)
+    if constructor is None:
       raise ValueError(f"invalid element of config['melt_tasks']: {name}")
-    out[name] = _constructors_dict[name](config)
+    else:
+      out[name] = constructor(config)
+
   return out

@@ -22,36 +22,48 @@
 
 	"model": "google/electra-small-discriminator",
 	"num_hidden": 256,
-	"batch_size": 200,
-	"mtllora": false,
+	"num_layer": 12,
+	"batch_size": 175,
+
+	"model_type": "std",
+	"adapter_r": 8,
+	"adapter_d": 8,
+	"adapter_b": 1,
+	"adapter_dropout": 0.02,
+	"hydra_float": 0.75,
+
 	"patience": 3,
-	"learning_rate": 5e-4,
-	"adapter_r": 16,
+	"learning_rate": 1e-3,
+	// mtllora doesn't have unified embeddings
 	"heads": {
-		"label": [64, 64, 32, 3],
-		"target": [128, 128, 64, 11],
-		"rationale": [64, 64, 32, 1],
-		"score": [128, 128, 64, 1],
+		"label": [3],
+		"target": [11],
+		"rationale": [1],
+		"score": [1],
 	},
-	"adapter_dropout": 0.05,
+	// "heads": {
+	// 	"label": [64, 64, 3],
+	// 	"target": [64, 64, 11],
+	// 	"rationale": [64, 64, 1],
+	// 	"score": [64, 64, 1],
+	// },
 	"quick_model": false,
 	// task + dataset selection
 	"features": ["tokens", "mask"],
 	"active_tasks": {
-		"explain": ["target", "label", "rationale",],
-		// "measuring": ["score"],
-		// "explain": ["target", "label"],
+		"explain": ["target", "label"],
+		"measuring": ["score"],
 	},
 	"stopping_monitors": {
 		"valid_target_f1": 0.02,
 		// "valid_rationale_f1": 0.01,
 		"valid_label_f1": 0.005,
-		// "valid_score_mse": -0.03,
+		"valid_score_mse": -0.03,
 	},
 	// MTL + VAT/GAT
 	"mtl_importances": {
 		"label": 1e0,
-		"target": 1e0,
+		"target": 5e0,
 		"rationale": 1e0,
 		"score": 2e0,
 	},

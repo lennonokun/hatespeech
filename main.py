@@ -2,6 +2,7 @@ import warnings
 import argparse
 import subprocess
 import pyjson5
+import math
 
 import torch
 from lightning import Trainer
@@ -16,18 +17,19 @@ def do_train(args):
   config = args.config
 
   torch.cuda.empty_cache()
-  if config["mtllora"]:
+  if config["model_type"] in ["std", "standard"]:
+    data = HateDatamodule(config, "dataset")
+    module = StandardModel(config)
+  elif config["model_type"] in ["mtllora"]:
     data = HateDatamodule(config, "task")
     module = MTLLoraModel(config)
   else:
-    data = HateDatamodule(config, "dataset")
-    module = StandardModel(config)
+    raise ValueError("model_type must be one of ['std', 'standard', 'mtllora']")
  
   trainer_kwargs = {
     "enable_checkpointing": True,
-    "max_epochs": 25,
+    "max_epochs": 30,
     "accelerator": "auto",
-    # "gradient_clip_val": 5.0,
     "precision": "bf16-mixed",
     "devices": 1,
     "callbacks": [
@@ -36,10 +38,10 @@ def do_train(args):
     ]
   }
   if config["quick_model"]:
-    trainer_kwargs["limit_train_batches"] = 0.2
-    trainer_kwargs["limit_val_batches"] = 0.2
-  else:
-    trainer_kwargs["logger"] = MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
+    trainer_kwargs["limit_train_batches"] = 0.05
+    trainer_kwargs["limit_val_batches"] = 0.05
+  # else:
+  trainer_kwargs["logger"] = MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
 
   trainer = Trainer(**trainer_kwargs)
   trainer.logger.log_hyperparams(config) # pyright: ignore[reportOptionalMemberAccess]
@@ -110,7 +112,7 @@ if __name__ == "__main__":
   parser_fix.set_defaults(func=do_fix)
 
   parser_train = subparsers.add_parser("train")
-  parser_train.add_argument("-m", "--mtllora", action="store_true")
+  parser_train.add_argument("model_type", type=str)
   parser_train.set_defaults(func=do_train)
 
   parser_load = subparsers.add_parser("load")

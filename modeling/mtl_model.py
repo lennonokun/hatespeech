@@ -18,7 +18,8 @@ class MTLLoraModel(BaseModel):
     adapter_config = MTLLoRAConfig(
       r=config["adapter_r"],
       dropout=config["adapter_dropout"],
-      n_up_projection=3,
+      vera_d=config["adapter_d"],
+      vera_b=config["adapter_b"],
     )
     for task in config["melt_tasks"]:
       self.model.add_adapter(task, adapter_config)
@@ -34,18 +35,17 @@ class MTLLoraModel(BaseModel):
     ).last_hidden_state
   
   def forward(self, batches, split):
-    metricss, losses = {}, {}
+    metricss, losses, sizes = {}, {}, {}
     for i, (name, batch) in enumerate(batches.items()):
       hidden = self.forward_encoder(batch, i)
       metricss[name], losses[name] = self.tasks[name].compute(hidden, batch, split)
+      sizes[name] = batch["size"]
 
     loss_counts = torch.Tensor(np.concatenate([
-      np.full(self.tasks[name].loss_dim, batches[name]["size"])
+      np.full(self.tasks[name].loss_dim, sizes[name])
       for name in self.config["melt_tasks"]
     ], axis=0)).cuda()
     loss_weights = loss_counts / loss_counts.mean()
-
-    sizes = {name: batch["size"] for name, batch in batches.items()}
 
     return metricss, losses, sizes, loss_weights
 

@@ -52,8 +52,8 @@ class TaskCombinedDataset(Dataset):
     return self.length
 
   def __getitem__(self, idx):
-    # get indices per name
     diffs = np.array(idx)[:, None] - self.offsets[None, :]
+    # get indices per name
     name_reverse_idx = np.argmax(diffs[:, ::-1] >= 0, axis=1)
     name_idx = (len(self.config["melt_tasks"]) - 1) - name_reverse_idx
 
@@ -61,12 +61,15 @@ class TaskCombinedDataset(Dataset):
     for i, (dataset, task) in enumerate(self.config["melt_pairs"]):
       curr_name_idx = np.where(name_idx == i)[0]
       dataset_idx = diffs[curr_name_idx, i]
-      rows = self.datasets[dataset][dataset_idx]
 
-      for feature in self.config["features"]:
-        batches[task][feature] = rows[feature]
-      batches[task][task] = rows[task]
+      if len(dataset_idx) > 0:
+        rows = self.datasets[dataset][dataset_idx]
+        for feature in self.config["features"]:
+          batches[task][feature] = rows[feature]
+        batches[task][task] = rows[task]
+
       batches[task]["size"] = len(dataset_idx)
+
     return batches
   
 # batch sampled

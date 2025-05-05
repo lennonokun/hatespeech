@@ -25,6 +25,9 @@ class BaseModel(ABC, LightningModule):
     raise NotImplementedError   
     
   def split_step(self, batches, split):
+    if any(x["size"] == 0 for x in batches.values()):
+      return None
+    
     metricss, losses, sizes, weights = self.forward(batches, split)
       
     log_kwargs = {"prog_bar": split == "test", "on_epoch": True, "on_step": False}

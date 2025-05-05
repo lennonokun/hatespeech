@@ -108,9 +108,10 @@ class MultiEarlyStopping(Callback):
   def _check_early_stopping(self, trainer):
     num_improved = 0
     for name, thresh in self.monitors.items():
-      curr_score = trainer.callback_metrics[name].squeeze()
-      is_improved = ((curr_score - self.prev_scores[name]) / thresh) >= 1.0
-      num_improved += bool(is_improved)
+      if name in trainer.callback_metrics:
+        curr_score = trainer.callback_metrics[name].squeeze()
+        is_improved = ((curr_score - self.prev_scores[name]) / thresh) >= 1.0
+        num_improved += bool(is_improved)
 
     if num_improved >= self.num_required:
       self.wait_count = 0
