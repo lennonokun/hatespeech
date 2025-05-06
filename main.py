@@ -2,48 +2,63 @@ import warnings
 import argparse
 import subprocess
 import pyjson5
-import math
 
 import torch
 from lightning import Trainer
+from lightning.pytorch.tuner.tuning import Tuner
 from lightning.pytorch.callbacks import RichProgressBar
 from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, construct_preprocessor
-from modeling import StandardModel, MTLLoraModel, HateDatamodule, MultiEarlyStopping
+from modeling import StandardModel, HydraModel, MTLLoraModel, HateDatamodule, MultiEarlyStopping
 
-def do_train(args):
-  config = args.config
-
-  torch.cuda.empty_cache()
+def pick_modules(config):
   if config["model_type"] in ["std", "standard"]:
     data = HateDatamodule(config, "dataset")
     module = StandardModel(config)
+  elif config["model_type"] in ["hydra"]:
+    data = HateDatamodule(config, "dataset")
+    module = HydraModel(config)
   elif config["model_type"] in ["mtllora"]:
     data = HateDatamodule(config, "task")
     module = MTLLoraModel(config)
   else:
-    raise ValueError("model_type must be one of ['std', 'standard', 'mtllora']")
- 
+    raise ValueError("model_type must be one of ['std', 'standard', 'hydra', 'mtllora']")
+
+  return data, module
+
+def get_trainer(config):
   trainer_kwargs = {
-    "enable_checkpointing": True,
+    "enable_checkpointing": False,
     "max_epochs": 30,
     "accelerator": "auto",
+    "gradient_clip_val": 0.5,
     "precision": "bf16-mixed",
     "devices": 1,
     "callbacks": [
       MultiEarlyStopping(config["stopping_monitors"], patience=config["patience"], num_required=1),
       RichProgressBar(leave=True)
-    ]
+    ],
+    "logger": MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
   }
   if config["quick_model"]:
     trainer_kwargs["limit_train_batches"] = 0.05
     trainer_kwargs["limit_val_batches"] = 0.05
-  # else:
-  trainer_kwargs["logger"] = MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
 
-  trainer = Trainer(**trainer_kwargs)
+  return Trainer(**trainer_kwargs)
+
+def do_train(args):
+  config = args.config
+  data, module = pick_modules(config)
+  trainer = get_trainer(config)
+
+  torch.cuda.empty_cache()
+  # tuner = Tuner(trainer)
+  # tuner.lr_find(module, datamodule=data, min_lr=2e-5, max_lr=1e-3)
+  # tuner.scale_batch_size(module, datamodule=data, init_val=32, max_trials=3)
+ 
+  torch.cuda.empty_cache()
   trainer.logger.log_hyperparams(config) # pyright: ignore[reportOptionalMemberAccess]
   trainer.fit(module, datamodule=data)
   trainer.test(module, datamodule=data)
@@ -112,7 +127,6 @@ if __name__ == "__main__":
   parser_fix.set_defaults(func=do_fix)
 
   parser_train = subparsers.add_parser("train")
-  parser_train.add_argument("model_type", type=str)
   parser_train.set_defaults(func=do_train)
 
   parser_load = subparsers.add_parser("load")

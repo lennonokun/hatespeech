@@ -10,7 +10,7 @@ from adapters import composition as ac
 
 from .base_model import BaseModel
 
-class StandardModel(BaseModel):
+class HydraModel(BaseModel):
   def __init__(self, config):
     super().__init__(config)
 
@@ -24,6 +24,7 @@ class StandardModel(BaseModel):
       #   bnb_4bit_quant_type="nf4",
       #   bnb_4bit_use_double_quant=True,
       #   bnb_4bit_compute_dtype=torch.bfloat16,
+      #   # llm_int8_skip_modules=[]
       # ),
     )
 
@@ -35,28 +36,38 @@ class StandardModel(BaseModel):
       # vera_b=config["adapter_b"],
       attn_matrices=["q","k","v"],
       selfattn_lora=True,
-      intermediate_lora=True,
-      output_lora=True,
+      # intermediate_lora=True,
+      # output_lora=True,
     )
 
-    lora_config = LoRAConfig(**config_kwargs)
-    self.model.add_adapter("lora", lora_config)
+    base_config = LoRAConfig(
+      leave_out=list(range(config["branch_layer"], config["num_layer"])),
+      **config_kwargs
+    )
+    self.model.add_adapter("base", base_config)
+
+    task_config = LoRAConfig(
+      leave_out=list(range(config["branch_layer"])),
+      **config_kwargs
+    )
     for task in config["melt_tasks"]:
       num_labels = config["heads"][task][0]
+      self.model.add_adapter(f"task_{task}", task_config)
       self.model.add_classification_head(
         f"task_{task}", num_labels=num_labels, multilabel=task=="target"
       )
 
-    self.model.active_head = [f"task_{task}" for task in config["melt_tasks"]]
-    self.model.set_active_adapters("lora")
-    self.model.train_adapter("lora")
+    task_adapters = [f"task_{task}" for task in config["melt_tasks"]]
+    composition = ac.Stack("base", ac.Parallel(*task_adapters)) # pyright: ignore
+    self.model.set_active_adapters(composition)
+    self.model.train_adapter(["base", *task_adapters])
 
     self.norm_layers = [
       v for k,v in self.model.named_parameters()
       if ("layer.8" in k) and "lora" in k
     ]
 
-    print([k for k,v in self.model.named_parameters() if "lora" in k])
+    print(len([k for k,v in self.model.named_parameters() if v.requires_grad]))
 
   def forward(self, batches, split):
     metricss, losses, sizes = {}, {}, {}
@@ -67,6 +78,10 @@ class StandardModel(BaseModel):
         input_ids=batch["tokens"],
         attention_mask=batch["mask"].float()
       )
+
+      # TODO dont use tasks in other datasets
+      if len(self.config["melt_tasks"]) == 1:
+        outputs = [outputs]
 
       for task_name, output in zip(self.config["melt_tasks"], outputs):
         if task_name in self.config["active_tasks"][set_name]:

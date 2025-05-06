@@ -1,4 +1,7 @@
 * notes
+- hydra is possible, not with bitsandbytes, only with
+  train_adapter(list) which is deprecated
+- bitsandbytes maybe only possible with non hydranet?
 - layernorm seems to help a lot
 - lora dropout maybe also
 - rationale seems to get stuck at 0.6 f1?

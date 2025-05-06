@@ -13,9 +13,11 @@ class BaseModel(ABC, LightningModule):
   def __init__(self, config):
     ABC.__init__(self)
     LightningModule.__init__(self)
+    self.save_hyperparameters()
 
+    self.lr = config["learning_rate"]
     self.config = config
-    self.tasks = nn.ModuleDict(construct_tasks(config)).cuda()
+    self.tasks = nn.ModuleDict(construct_tasks(config))
     self.mtl_loss = construct_mtl_loss(config, self.tasks)
     # SHOULD BE SET IN SUBCLASS __init__ OR NO GRAD NORM
     self.norm_layers = None

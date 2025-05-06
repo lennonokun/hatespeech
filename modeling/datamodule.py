@@ -172,30 +172,29 @@ class HateDatamodule(LightningDataModule):
     super().__init__()
     self.config = config
     self.method = method
+    self.batch_size = config["batch_size"]
   
   def _select_data(self, split):
     combiner = self._combine_constructors[self.method]
-    dataset = combiner(self.config, {
+    return combiner(self.config, {
       name: self._constructors[name](self.config, split)
       for name in self.config["flat_datasets"]
     })
-    sampler = BatchSampler(
-      RandomSampler(dataset),
-      batch_size=self.config["batch_size"],
-      drop_last=False
-    )
-    return dataset, sampler
   
   def setup(self, stage: str):
     self.datasets = {}
-    self.samplers = {}
     for split in ["train", "valid", "test"]:
-      self.datasets[split], self.samplers[split] = self._select_data(split)
+      self.datasets[split] = self._select_data(split)
 
   def _get_dataloader(self, split: str):
+    sampler = BatchSampler(
+      RandomSampler(self.datasets[split]),
+      batch_size=self.batch_size,
+      drop_last=False
+    )
     return DataLoader(
       self.datasets[split],
-      sampler=self.samplers[split],
+      sampler=sampler,
       batch_size=None,
       num_workers=4,
       pin_memory=True,

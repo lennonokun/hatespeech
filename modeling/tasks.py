@@ -37,7 +37,7 @@ class BaseTask(ABC, nn.Module):
     self.importance = importance
 
     input_dims = input_dims if input_dims is not None else [] 
-    self.head = self.make_head(config, input_dims)
+    self.head = lambda x: x
 
   # make task head with configured shape
   def make_head(self, config, input_dims):
@@ -127,7 +127,7 @@ class TargetTask(BaseTask):
     )
 
   def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
+    logits = self.head(hidden)
     return {
       "logits": logits,
       "trues": batch["target"],
@@ -154,7 +154,7 @@ class LabelTask(BaseTask):
     )
 
   def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
+    logits = self.head(hidden)
     return {
       "logits": logits,
       "trues": batch["label"],
@@ -177,7 +177,7 @@ class ScoreTask(BaseTask):
 
   def forward(self, hidden, batch):
     return {
-      "preds": self.head(hidden[:, 0, :]).squeeze(-1),
+      "preds": self.head(hidden).squeeze(-1),
       "trues": batch["score"],
     }
 
