@@ -9,16 +9,21 @@
   - can fix by manually changing, seems to maybe minorly affect metrics?
   - have to use adapter.init() not AutoAdapterModel ???
 
+** compilation
+- maybe worth it???
+- ~10% speed increase
+- yet to try on base-discriminator
+
 ** model size
 - larger model greatly improves target f1
-- comparable 
+- comparable label f1 
 
 ** hydra
 - possible only with train_adapter(list) which is deprecated
 - not sure if works with quantization
 
 ** isolation
-- produces
+- todo
 
 ** else
 - rationale seems to get stuck at 0.6 f1?
