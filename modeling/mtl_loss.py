@@ -52,9 +52,10 @@ class MTLLoss(ABC, nn.Module):
 
     self.config = config
     self.losses_dim = sum(task.loss_dim for task in tasks.values())
-    self.loss_importances = torch.Tensor(np.concatenate([
-      np.full(task.loss_dim, task.importance) for task in tasks.values()
-    ], axis=0)).cuda()
+    self.loss_importances = torch.cat([
+      torch.full((task.loss_dim,), task.importance, device="cuda")
+      for task in tasks.values()
+    ], dim=0)
     self.loss_importances /= torch.mean(self.loss_importances)
     self.grad_norm = MTLGradNorm(config) if config["mtl_norm_do"] else None
 

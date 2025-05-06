@@ -1,20 +1,15 @@
 import numpy as np
 import torch
-from torch.optim import AdamW
 
-from adapters import AutoAdapterModel, MTLLoRAConfig
+from adapters import MTLLoRAConfig
 import adapters.composition as ac
 
 from .base_model import BaseModel
 
 class MTLLoraModel(BaseModel):
   def __init__(self, config):
-    super().__init__(config)
+    super().__init__(config, do_quantize=False)
 
-    self.model = AutoAdapterModel.from_pretrained(
-      config["model"],
-      low_cpu_mem_usage=True,
-    )
     adapter_config = MTLLoRAConfig(
       r=config["adapter_r"],
       dropout=config["adapter_dropout"],
@@ -48,8 +43,3 @@ class MTLLoraModel(BaseModel):
     loss_weights = loss_counts / loss_counts.mean()
 
     return metricss, losses, sizes, loss_weights
-
-  def configure_optimizers(self):
-    std_params = filter(lambda p: p.requires_grad, self.parameters())
-    return AdamW(params=std_params, lr=self.config["learning_rate"])
-

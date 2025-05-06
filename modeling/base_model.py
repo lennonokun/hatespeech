@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
 
-import torch
 import numpy as np
+import torch
 from torch import nn
+
+from transformers import AutoModel, BitsAndBytesConfig
+from bitsandbytes.optim import *
+from torch.optim.lr_scheduler import *
 
 from lightning import LightningModule
 
@@ -10,10 +14,24 @@ from .mtl_loss import construct_mtl_loss
 from .tasks import construct_tasks
   
 class BaseModel(ABC, LightningModule):
-  def __init__(self, config):
+  def __init__(self, config, do_quantize):
     ABC.__init__(self)
     LightningModule.__init__(self)
     self.save_hyperparameters()
+
+    bnb_config = BitsAndBytesConfig(
+      load_in_4bit=True,
+      bnb_4bit_quant_type="nf4",
+      bnb_4bit_use_double_quant=True,
+      bnb_4bit_compute_dtype=torch.bfloat16,
+    )
+    self.model = AutoModel.from_pretrained(
+      config["model"],
+      low_cpu_mem_usage=True,
+      device_map="auto",
+      torch_dtype=torch.bfloat16,
+      quantization_config=bnb_config if do_quantize else None,
+    )
 
     self.lr = config["learning_rate"]
     self.config = config
@@ -51,6 +69,33 @@ class BaseModel(ABC, LightningModule):
     # ensure that order is consistent
     losses = [losses[task_name] for task_name in self.config["melt_tasks"]]
     return self.mtl_loss(losses, self.norm_layers, weights, split)
+
+  def configure_optimizers(self): # pyright: ignore
+    std_params = filter(lambda p: p.requires_grad, self.parameters())
+    optimizer = PagedAdamW32bit(params=std_params, lr=self.lr)
+    # optimizer = AdamW(params=std_params, lr=self.lr)
+    warmup_scheduler = LinearLR(
+      optimizer,
+      start_factor=0.01,
+      end_factor=1.0,
+      total_iters=3
+    )
+    cosine_scheduler = CosineAnnealingLR(
+      optimizer,
+      T_max=1,
+      eta_min=0.1*self.lr,
+    )
+    scheduler = SequentialLR(
+      optimizer,
+      schedulers=[warmup_scheduler, cosine_scheduler],
+      milestones=[3]
+    )
+    return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
+
+  def state_dict(self, *args, **kwargs):
+    state = super().state_dict(*args, **kwargs)
+    quant_ends = ('absmax', 'scale', 'quant_map', 'bitsandbytes__nf4')
+    return {k: v for k, v in state.items() if not k.endswith(quant_ends)}
     
   def training_step(self, batch):
     return self.split_step(batch, "train")

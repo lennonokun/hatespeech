@@ -1,26 +1,42 @@
 * notes
-- hydra is possible, not with bitsandbytes, only with
-  train_adapter(list) which is deprecated
-- bitsandbytes maybe only possible with non hydranet?
-- layernorm seems to help a lot
-- lora dropout maybe also
+
+** quantization
+- do not use Trainer(precision=...) ???
+- peft has better support
+  - lora vars work as fp32
+- adapters has worse support
+  - lora vars need to match AutoModel's torch_dtype
+  - can fix by manually changing, seems to maybe minorly affect metrics?
+  - have to use adapter.init() not AutoAdapterModel ???
+
+** model size
+- larger model greatly improves target f1
+- comparable 
+
+** hydra
+- possible only with train_adapter(list) which is deprecated
+- not sure if works with quantization
+
+** isolation
+- produces
+
+** else
 - rationale seems to get stuck at 0.6 f1?
 - probably heads should have their own learning rate?
-- check mtl_importances working
-- check if can do branching adapters with LoraConfig leave_out
-- reconsider quantization
 
 * todo
 
 ** short-term
+- actually save adapters
+- abstract task with optional heads or just custom classification heads
 - re-add VAT
-- WEIGH TASKS SEPARATELY BY TOTAL FREQUENCY
+- adapter fusion on isolated training
+- fixed step epochs with equal sampling from datasets?
 - task batches should include all dataset labels
 - separate data loading into its own module
 - update readme papers + datasets
 
 ** medium-term
-- branching adapters
 - try more virtual adversarial training
 - try label smoothing?
 - attention mechanism with rationales?

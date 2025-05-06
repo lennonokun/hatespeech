@@ -16,52 +16,58 @@
 	"max_length": 128,
 	"best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
 
-	// "model": "google/electra-base-discriminator",
-	// "num_hidden": 768,
-	// "num_layer": 12,
-	// "branch_layer": 9,
-	// "batch_size": 128,
-
-	"model": "google/electra-small-discriminator",
-	"num_hidden": 256,
+	"model": "google/electra-base-discriminator",
+	"num_hidden": 768,
 	"num_layer": 12,
 	"branch_layer": 9,
-	"batch_size": 128,
+	"batch_size": 90,
 
-	"model_type": "std",
+	// "batch_size": 50,
+	// "model": "google/electra-small-discriminator",
+	// "num_hidden": 256,
+	// "num_layer": 12,
+	// "branch_layer": 9,
+	// "batch_size": 100,
+
+	"model_type": "peft",
 	"adapter_r": 8,
-	"adapter_alpha": 32,
+	"adapter_alpha": 8,
 	// "adapter_d": 32,
 	// "adapter_b": 2,
 	"adapter_dropout": 0.05,
 
-	"patience": 4,
-	"learning_rate": 8e-4,
-	// mtllora doesn't have unified embeddings
-	"heads": {
-		"label": [3],
-		"target": [11],
-		"rationale": [1],
-		"score": [1],
-	},
-	// "heads": {
-	// 	"label": [64, 64, 3],
-	// 	"target": [64, 64, 11],
-	// 	"rationale": [64, 64, 1],
-	// 	"score": [64, 64, 1],
-	// },
-	"quick_model": false,
-	// task + dataset selection
-	"features": ["tokens", "mask"],
-	"active_tasks": {
-		"explain": ["label", "target"],
-		// "measuring": ["score"],
-	},
 	"stopping_monitors": {
 		"valid_target_f1": 0.02,
 		// "valid_rationale_f1": 0.01,
 		"valid_label_f1": 0.005,
 		// "valid_score_mse": -0.03,
+	},
+	"num_required": 1,
+	"patience": 5,
+
+	"learning_rate": 5e-4,
+
+	// mtllora doesn't have unified embeddings
+	// "heads": {
+	// 	"label": [3],
+	// 	"target": [11],
+	// 	"rationale": [1],
+	// 	"score": [1],
+	// },
+	"heads": {
+		"label": [64, 3],
+		"target": [64, 11],
+		"rationale": [64, 1],
+		"score": [64, 1],
+	},
+	"quick_model": false,
+	"dynamic_length": true,
+
+	// task + dataset selection
+	"features": ["tokens", "mask"],
+	"active_tasks": {
+		"explain": ["label", "target"],
+		// "measuring": ["score"],
 	},
 	// MTL + VAT/GAT
 	"mtl_importances": {

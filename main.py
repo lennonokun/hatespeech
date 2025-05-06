@@ -11,35 +11,22 @@ from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, construct_preprocessor
-from modeling import StandardModel, HydraModel, MTLLoraModel, HateDatamodule, MultiEarlyStopping
-
-def pick_modules(config):
-  if config["model_type"] in ["std", "standard"]:
-    data = HateDatamodule(config, "dataset")
-    module = StandardModel(config)
-  elif config["model_type"] in ["hydra"]:
-    data = HateDatamodule(config, "dataset")
-    module = HydraModel(config)
-  elif config["model_type"] in ["mtllora"]:
-    data = HateDatamodule(config, "task")
-    module = MTLLoraModel(config)
-  else:
-    raise ValueError("model_type must be one of ['std', 'standard', 'hydra', 'mtllora']")
-
-  return data, module
+from modeling import construct_datamodule, construct_module ,MultiEarlyStopping
 
 def get_trainer(config):
+  early_stopping = MultiEarlyStopping(
+    config["stopping_monitors"],
+    patience=config["patience"],
+    num_required=config["num_required"]
+  )
   trainer_kwargs = {
     "enable_checkpointing": False,
     "max_epochs": 30,
     "accelerator": "auto",
     "gradient_clip_val": 0.5,
-    "precision": "bf16-mixed",
+    # "precision": "bf16-mixed",
     "devices": 1,
-    "callbacks": [
-      MultiEarlyStopping(config["stopping_monitors"], patience=config["patience"], num_required=1),
-      RichProgressBar(leave=True)
-    ],
+    "callbacks": [early_stopping, RichProgressBar(leave=True)],
     "logger": MLFlowLogger("hatespeech", tracking_uri="file:./mlruns")
   }
   if config["quick_model"]:
@@ -50,18 +37,21 @@ def get_trainer(config):
 
 def do_train(args):
   config = args.config
-  data, module = pick_modules(config)
+
+  datamodule = construct_datamodule(config)
+  module = construct_module(config)
+  # module = torch.compile(module, dynamic=False)
   trainer = get_trainer(config)
 
   torch.cuda.empty_cache()
   # tuner = Tuner(trainer)
-  # tuner.lr_find(module, datamodule=data, min_lr=2e-5, max_lr=1e-3)
+  # tuner.lr_find(module, datamodule=datamodule, min_lr=2e-5, max_lr=1e-3)
   # tuner.scale_batch_size(module, datamodule=data, init_val=32, max_trials=3)
  
   torch.cuda.empty_cache()
   trainer.logger.log_hyperparams(config) # pyright: ignore[reportOptionalMemberAccess]
-  trainer.fit(module, datamodule=data)
-  trainer.test(module, datamodule=data)
+  trainer.fit(module, datamodule=datamodule)
+  trainer.test(module, datamodule=datamodule)
 
 def do_test(args):
   pass
@@ -87,8 +77,8 @@ def do_test(args):
   # trainer.test(module, datamodule=data)
 
 def do_load(args):
-  data = HateDatamodule(args.method, args.config)
-  data.setup("")
+  datamodule = construct_datamodule(args.config, args.method)
+  datamodule.setup("")
 
 def do_preprocess(args):
   preprocessor = construct_preprocessor(args.config, args.name)

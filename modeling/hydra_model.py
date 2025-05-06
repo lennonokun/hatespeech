@@ -4,52 +4,29 @@ import torch
 from bitsandbytes.optim import *
 from torch.optim.lr_scheduler import *
 
-from transformers import BitsAndBytesConfig
-from adapters import AutoAdapterModel, LoRAConfig
+from adapters import LoRAConfig
 from adapters import composition as ac
 
 from .base_model import BaseModel
 
 class HydraModel(BaseModel):
   def __init__(self, config):
-    super().__init__(config)
+    super().__init__(config, do_quantize=False)
 
-    self.model = AutoAdapterModel.from_pretrained(
-      config["model"],
-      low_cpu_mem_usage=True,
-      device_map="auto",
-      torch_dtype=torch.bfloat16,
-      # quantization_config=BitsAndBytesConfig(
-      #   load_in_4bit=True,
-      #   bnb_4bit_quant_type="nf4",
-      #   bnb_4bit_use_double_quant=True,
-      #   bnb_4bit_compute_dtype=torch.bfloat16,
-      #   # llm_int8_skip_modules=[]
-      # ),
-    )
+    config_kwargs = {
+      "r": config["adapter_r"],
+      "alpha": config["adapter_alpha"],
+      "dropout": config["adapter_dropout"],
+      "attn_matrices": ["q","k","v"],
+      "selfattn_lora": True,
+    }
 
-    config_kwargs = dict(
-      r=config["adapter_r"],
-      alpha=config["adapter_alpha"],
-      dropout=config["adapter_dropout"],
-      # vera_d=config["adapter_d"],
-      # vera_b=config["adapter_b"],
-      attn_matrices=["q","k","v"],
-      selfattn_lora=True,
-      # intermediate_lora=True,
-      # output_lora=True,
-    )
-
-    base_config = LoRAConfig(
-      leave_out=list(range(config["branch_layer"], config["num_layer"])),
-      **config_kwargs
-    )
+    base_exclude = list(range(config["branch_layer"], config["num_layer"]))
+    base_config = LoRAConfig(leave_out=base_exclude, **config_kwargs)
     self.model.add_adapter("base", base_config)
 
-    task_config = LoRAConfig(
-      leave_out=list(range(config["branch_layer"])),
-      **config_kwargs
-    )
+    task_exclude = list(range(config["branch_layer"]))
+    task_config = LoRAConfig(leave_out=task_exclude, **config_kwargs)
     for task in config["melt_tasks"]:
       num_labels = config["heads"][task][0]
       self.model.add_adapter(f"task_{task}", task_config)

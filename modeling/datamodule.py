@@ -106,8 +106,11 @@ class ExplainDataset(HateDataset):
     label = np.array(self.df.iloc[idx, self.locs["label"]], dtype=np.float32)
     target = np.array(self.df.iloc[idx, self.locs["target"]], dtype=np.float32)
 
-    tokens_list = self.df.iloc[idx, self.locs["tokens"]]
-    max_len = max(len(tokens) for tokens in tokens_list)
+    if self.config["dynamic_length"]:
+      tokens_list = self.df.iloc[idx, self.locs["tokens"]]
+      max_len = max(len(tokens) for tokens in tokens_list)
+    else:
+      max_len = self.config["max_length"]
 
     tokens = np.zeros((num_idx, max_len), dtype=np.int32)
     mask = np.zeros((num_idx, max_len), dtype=np.bool_)
@@ -141,8 +144,11 @@ class MeasuringDataset(HateDataset):
     
     score = np.array(self.df.iloc[idx, self.locs["score"]], dtype=np.float32)
 
-    tokens_list = self.df.iloc[idx, self.locs["tokens"]]
-    max_len = max(len(tokens) for tokens in tokens_list)
+    if self.config["dynamic_length"]:
+      tokens_list = self.df.iloc[idx, self.locs["tokens"]]
+      max_len = max(len(tokens) for tokens in tokens_list)
+    else:
+      max_len = self.config["max_length"]
 
     tokens = np.zeros((num_idx, max_len), dtype=np.int32)
     mask = np.zeros((num_idx, max_len), dtype=np.bool_)
@@ -190,7 +196,7 @@ class HateDatamodule(LightningDataModule):
     sampler = BatchSampler(
       RandomSampler(self.datasets[split]),
       batch_size=self.batch_size,
-      drop_last=False
+      drop_last=True
     )
     return DataLoader(
       self.datasets[split],
