@@ -51,7 +51,9 @@ def do_train(args):
   torch.cuda.empty_cache()
   trainer.logger.log_hyperparams(config) # pyright: ignore[reportOptionalMemberAccess]
   trainer.fit(module, datamodule=datamodule)
+  # module.dequantize()
   trainer.test(module, datamodule=datamodule)
+  module.save(args.save_adapters, args.save_heads)
 
 def do_test(args):
   pass
@@ -117,6 +119,8 @@ if __name__ == "__main__":
   parser_fix.set_defaults(func=do_fix)
 
   parser_train = subparsers.add_parser("train")
+  parser_train.add_argument("--save-heads", type=str)
+  parser_train.add_argument("--save-adapters", type=str)
   parser_train.set_defaults(func=do_train)
 
   parser_load = subparsers.add_parser("load")

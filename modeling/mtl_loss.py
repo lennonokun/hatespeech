@@ -27,6 +27,7 @@ class MTLGradNorm(nn.Module):
     return torch.stack(norms)
 
   def forward(self, losses, norm_layers, split):
+
     if split == "train":
       self.wait += 1
 
@@ -53,13 +54,15 @@ class MTLLoss(ABC, nn.Module):
     self.config = config
     self.losses_dim = sum(task.loss_dim for task in tasks.values())
     self.loss_importances = torch.cat([
-      torch.full((task.loss_dim,), task.importance, device="cuda")
+      torch.full((task.loss_dim,), task.importance, dtype=torch.float32, device="cuda")
       for task in tasks.values()
     ], dim=0)
     self.loss_importances /= torch.mean(self.loss_importances)
     self.grad_norm = MTLGradNorm(config) if config["mtl_norm_do"] else None
 
   def forward(self, losses, norm_layers, external_weights, split):
+    # ensure that order is consistent
+    losses = [losses[task_name] for task_name in self.config["melt_tasks"]]
     losses = torch.cat([torch.atleast_1d(loss) for loss in losses], dim=0)
     external_weights *= self.loss_importances
     if self.grad_norm is not None and norm_layers is not None:

@@ -1,7 +1,7 @@
 [project]
-name = "jigsaw"
-version = "0.1.0"
-description = "Add your description here"
+name = "hatespeech"
+version = "0.2.0"
+description = "hatespeech detection with mtl and adapters"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,13 +14,12 @@ dependencies = [
 	"nltk>=3.9.1",
 	"numpy<2.0",
 	"pandas>=2.2.3",
-	"peft>=0.15.2",
-	"pyarrow>=11.0.0",
 	"pyjson5>=1.6.8",
 	"pyspark>=3.5.5",
 	"torch>=2.5.1",
 	"torchinfo>=1.8.0",
 	"torchmetrics>=1.6.1",
+	"torchvision>=0.21.0",
 	"transformers>=4.47.1",
 ]
 

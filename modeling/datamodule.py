@@ -2,7 +2,6 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-import torch
 
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
@@ -214,3 +213,18 @@ class HateDatamodule(LightningDataModule):
   
   def test_dataloader(self):
     return self._get_dataloader("test")
+
+_data_methods = {
+  "std": "dataset",
+  "hydra": "dataset",
+  "fusion": "dataset",
+  "mtllora": "task",
+}
+def construct_datamodule(config, method=None):
+  if method is not None:
+    return HateDatamodule(config, method)
+  elif config["model_type"] not in _data_methods:
+    raise ValueError(f"invalid {config['model_type']=}")
+
+  method = _data_methods[config["model_type"]]
+  return HateDatamodule(config, method)

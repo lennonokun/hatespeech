@@ -16,20 +16,20 @@
 	"max_length": 128,
 	"best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
 
-	"model": "google/electra-base-discriminator",
-	"num_hidden": 768,
-	"num_layer": 12,
-	"branch_layer": 9,
-	"batch_size": 90,
-
-	// "batch_size": 50,
-	// "model": "google/electra-small-discriminator",
-	// "num_hidden": 256,
+	// "model": "google/electra-base-discriminator",
+	// "num_hidden": 768,
 	// "num_layer": 12,
 	// "branch_layer": 9,
-	// "batch_size": 100,
+	// "batch_size": 90,
 
-	"model_type": "peft",
+	"model": "google/electra-small-discriminator",
+	"num_hidden": 256,
+	"num_layer": 12,
+	"branch_layer": 9,
+	"batch_size": 100,
+
+	"model_type": "fusion",
+	"quantize": true,
 	"adapter_r": 8,
 	"adapter_alpha": 8,
 	// "adapter_d": 32,
@@ -37,37 +37,38 @@
 	"adapter_dropout": 0.05,
 
 	"stopping_monitors": {
-		"valid_target_f1": 0.02,
+		"valid_target_f1": 0.005,
 		// "valid_rationale_f1": 0.01,
 		"valid_label_f1": 0.005,
-		// "valid_score_mse": -0.03,
+		"valid_score_mse": -0.03,
 	},
 	"num_required": 1,
 	"patience": 5,
 
 	"learning_rate": 5e-4,
 
-	// mtllora doesn't have unified embeddings
-	// "heads": {
-	// 	"label": [3],
-	// 	"target": [11],
-	// 	"rationale": [1],
-	// 	"score": [1],
-	// },
-	"heads": {
-		"label": [64, 3],
-		"target": [64, 11],
-		"rationale": [64, 1],
-		"score": [64, 1],
+	"head_is_multitoken": ["rationale"],
+	"head_labels": {
+		"label": 3,
+		"target": 11,
+		"rationale": 1,
+		"score": 1,
 	},
+	"head_layers": {
+		"label": 2,
+		"target": 2,
+		"rationale": 2,
+		"score": 2,
+	},
+	"head_dropout": 0.1,
 	"quick_model": false,
 	"dynamic_length": true,
 
 	// task + dataset selection
 	"features": ["tokens", "mask"],
 	"active_tasks": {
-		"explain": ["label", "target"],
-		// "measuring": ["score"],
+		"explain": ["target", "label"],
+		"measuring": ["score"],
 	},
 	// MTL + VAT/GAT
 	"mtl_importances": {

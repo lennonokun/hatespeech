@@ -2,12 +2,12 @@
 
 ** quantization
 - do not use Trainer(precision=...) ???
-- peft has better support
+- peft has better support, but much less flexible otherwise
   - lora vars work as fp32
 - adapters has worse support
   - lora vars need to match AutoModel's torch_dtype
   - can fix by manually changing, seems to maybe minorly affect metrics?
-  - have to use adapter.init() not AutoAdapterModel ???
+- currently heads are still float32, but probably worth it for stability
 
 ** compilation
 - maybe worth it???
@@ -19,8 +19,7 @@
 - comparable label f1 
 
 ** hydra
-- possible only with train_adapter(list) which is deprecated
-- not sure if works with quantization
+- possible only with train_adapter(list) which gives deprecation warning
 
 ** isolation
 - todo
@@ -32,10 +31,10 @@
 * todo
 
 ** short-term
+- ONLY SET SPECIFICS ACTIVE
 - actually save adapters
-- abstract task with optional heads or just custom classification heads
-- re-add VAT
-- adapter fusion on isolated training
+- re-add VAT + gradnorm, check if worth
+- configs as mergable files
 - fixed step epochs with equal sampling from datasets?
 - task batches should include all dataset labels
 - separate data loading into its own module
