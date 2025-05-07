@@ -5,7 +5,7 @@ import pandas as pd
 
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.sampler import BatchSampler, RandomSampler
+from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, RandomSampler
 
 # TODO shared feature
 # batch sampled
@@ -14,11 +14,12 @@ class DatasetCombinedDataset(Dataset):
     self.names = list(datasets.keys())
     self.datasets = [datasets[name] for name in self.names]
     self.num_datasets = len(self.datasets)
-    # self.features = features
 
     lengths = np.array([len(dataset) for dataset in self.datasets])
     self.length = np.sum(lengths)
     self.offsets = np.cumsum(lengths) - lengths
+    self.weights = np.concatenate([np.full(length, 1/length) for length in lengths])
+    self.min_length = int(np.min(lengths))
 
   def __len__(self):
     return self.length
@@ -46,6 +47,8 @@ class TaskCombinedDataset(Dataset):
     lengths = np.array([len(datasets[name]) for name in config["melt_datasets"]])
     self.length = np.sum(lengths)
     self.offsets = np.cumsum(lengths) - lengths
+    self.weights = np.concatenate([np.full(length, 1/length) for length in lengths])
+    self.min_length = int(np.min(lengths))
 
   def __len__(self):
     return self.length
@@ -192,14 +195,21 @@ class HateDatamodule(LightningDataModule):
       self.datasets[split] = self._select_data(split)
 
   def _get_dataloader(self, split: str):
-    sampler = BatchSampler(
-      RandomSampler(self.datasets[split]),
+    if split == "train":
+      random_sampler = WeightedRandomSampler(
+        weights=self.datasets[split].weights,
+        num_samples=self.datasets[split].min_length,
+      )
+    else:
+      random_sampler = RandomSampler(self.datasets[split])
+    batch_sampler = BatchSampler(
+      random_sampler,
       batch_size=self.batch_size,
       drop_last=True
     )
     return DataLoader(
       self.datasets[split],
-      sampler=sampler,
+      sampler=batch_sampler,
       batch_size=None,
       num_workers=4,
       pin_memory=True,
