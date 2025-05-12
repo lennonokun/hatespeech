@@ -4,6 +4,7 @@ from torch import nn
 
 from transformers import BitsAndBytesConfig
 from adapters import AutoAdapterModel
+from adapters.heads.base import MultiHeadOutput
 from bitsandbytes.optim import *
 from torch.optim.lr_scheduler import *
 
@@ -54,10 +55,17 @@ class BaseModel(LightningModule):
     metricss, losses, sizes = {}, {}, {}
     for set_name in self.config["flat_datasets"]:
       batch = batches[set_name]
-      outputs = self.model(
+      result = self.model(
         input_ids=batch["tokens"],
         attention_mask=batch["mask"].bfloat16()
-      ).head_outputs
+      )
+      match result:
+        case MultiHeadOutput():
+          outputs = result.head_outputs
+        case torch.Tensor():
+          outputs = [result]
+        case _:
+          raise TypeError("invalid result type")
 
       for output, (set_name2, task_name) in zip(outputs, self.config["melt_pairs"]):
         if set_name == set_name2:
