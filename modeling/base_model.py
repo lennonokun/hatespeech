@@ -2,75 +2,83 @@ import numpy as np
 import torch
 from torch import nn
 
-from transformers import BitsAndBytesConfig
-from adapters import AutoAdapterModel
-from adapters.heads.base import MultiHeadOutput
+from transformers import AutoModel, BitsAndBytesConfig
+import adapters
 from bitsandbytes.optim import *
 from torch.optim.lr_scheduler import *
 
 from lightning import LightningModule
 
 from .mtl_loss import construct_mtl_loss
-from .tasks import HateHead, construct_tasks
+from .tasks import construct_tasks
+from .custom import MultiLR
   
 class BaseModel(LightningModule):
-  def __init__(self, config):
+  def __init__(self, config, model_config=None):
     super().__init__()
     self.save_hyperparameters()
 
     self.lr = config["learning_rate"]
     self.config = config
-    self.model = self.create_adapter_model(config)
+    self.model = self.create_adapter_model(config, model_config)
     self.tasks = nn.ModuleDict(construct_tasks(config))
     self.mtl_loss = construct_mtl_loss(config, self.tasks)
     # SHOULD BE SET IN SUBCLASS __init__ OR NO GRAD NORM
     self.norm_layers = None
 
-  def create_adapter_model(self, config):
+  def create_adapter_model(self, config, model_config):
     bnb_config = BitsAndBytesConfig(
       load_in_4bit=True,
       bnb_4bit_quant_type="nf4",
       bnb_4bit_use_double_quant=True,
       bnb_4bit_compute_dtype=torch.bfloat16,
     )
-    model = AutoAdapterModel.from_pretrained(
+    model = AutoModel.from_pretrained(
       config["model"],
+      config=model_config,
       low_cpu_mem_usage=True,
       device_map="auto",
       torch_dtype=torch.bfloat16,
       quantization_config=bnb_config if config["quantize"] else None,
     )
-    model.register_custom_head("hate", HateHead)
-    for task in config["melt_tasks"]:
-      model.add_custom_head(head_type="hate", head_name=task, hate_config=config)
-    model.active_head = config["melt_tasks"]
+    adapters.init(model)
     return model
+
+  def vis_params(self):
+    params = list(self.model.named_parameters())
+    max_name_len = max(len(k) for k,_ in params)
+    grad_params = [(k, v) for k,v in params if v.requires_grad]
+    no_grad_params = [(k, v) for k,v in params if not v.requires_grad]
+    print(f"grad params:")
+    for k, v in grad_params:
+      print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
+    print(f"no grad params:")
+    for k, v in no_grad_params:
+      print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
 
   def adjust_dtypes(self):
     for name, param in self.model.named_parameters():
       if "adapter" in name or "lora" in name:
         param.data = param.data.to(torch.bfloat16)
 
+  def save(self, dest):
+    if dest is not None:
+      self.model.save_all_adapters(dest)
+
+  def forward_base(self, batch):
+    return self.model(
+      input_ids=batch["tokens"],
+      attention_mask=batch["mask"].bfloat16()
+    ).last_hidden_state.float()
+
   def forward(self, batches, split):
     metricss, losses, sizes = {}, {}, {}
     for set_name in self.config["flat_datasets"]:
       batch = batches[set_name]
-      result = self.model(
-        input_ids=batch["tokens"],
-        attention_mask=batch["mask"].bfloat16()
-      )
-      match result:
-        case MultiHeadOutput():
-          outputs = result.head_outputs
-        case torch.Tensor():
-          outputs = [result]
-        case _:
-          raise TypeError("invalid result type")
-
-      for output, (set_name2, task_name) in zip(outputs, self.config["melt_pairs"]):
-        if set_name == set_name2:
-          metricss[task_name], losses[task_name] = self.tasks[task_name].compute(output, batch, split)
-          sizes[task_name] = batch["size"]
+      hidden = self.forward_base(batch)
+      for task_name in self.config["active_tasks"][set_name]:
+        metricss[task_name], losses[task_name] = self.tasks[task_name].compute(hidden, batch, split)
+        sizes[task_name] = batch["size"]
 
     return metricss, losses, sizes
 
@@ -107,26 +115,41 @@ class BaseModel(LightningModule):
     return self.mtl_loss(losses, self.norm_layers, weights, split)
 
   def configure_optimizers(self): # pyright: ignore
-    std_params = filter(lambda p: p.requires_grad, self.parameters())
-    optimizer = PagedAdamW32bit(params=std_params, lr=self.lr)
-    # optimizer = AdamW(params=std_params, lr=self.lr)
-    warmup_scheduler = LinearLR(
-      optimizer,
-      start_factor=0.01,
-      end_factor=1.0,
-      total_iters=3
-    )
-    cosine_scheduler = CosineAnnealingLR(
-      optimizer,
-      T_max=1,
-      eta_min=0.1*self.lr,
-    )
-    scheduler = SequentialLR(
-      optimizer,
-      schedulers=[warmup_scheduler, cosine_scheduler],
-      milestones=[3]
-    )
-    return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
+    head_params = self.tasks.parameters()
+    model_params = filter(lambda p: p.requires_grad, self.model.parameters())
+    optimizer = PagedAdamW32bit([
+      {"params": head_params, "lr": self.lr},
+      {"params": model_params, "lr": 5*self.lr}
+    ])
+
+    def head_scheduler(optimizer):
+      return CosineAnnealingLR(
+        optimizer,
+        T_max=1,
+        eta_min=0.05*self.lr,
+      )
+
+    def model_scheduler(optimizer):
+      return SequentialLR(
+        optimizer,
+        schedulers=[
+          LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=self.config["model_warmup"],
+          ), CosineAnnealingLR(
+            optimizer,
+            T_max=1,
+            eta_min=0.01*self.lr,
+          )
+        ],
+        milestones=[self.config["model_warmup"]]
+      )
+
+    scheduler = MultiLR(optimizer, [head_scheduler, model_scheduler])
+    scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
+    return [optimizer], [scheduler_dict]
 
   def state_dict(self, *args, **kwargs):
     state = super().state_dict(*args, **kwargs)

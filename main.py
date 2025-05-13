@@ -11,17 +11,24 @@ from lightning.pytorch.loggers import MLFlowLogger
 from torch.optim.lr_scheduler import EPOCH_DEPRECATION_WARNING
 
 from preprocessing import load_stats, do_fix, construct_preprocessor
-from modeling import construct_datamodule, construct_module ,MultiEarlyStopping
+from modeling import construct_datamodule, construct_module, MultiEarlyStopping
 
 def get_trainer(config):
+  monitors = {}
+  for task in config["melt_tasks"]:
+    for key, value in config["stopping_monitors"][task].items():
+      monitors[key] = value
+
   early_stopping = MultiEarlyStopping(
-    config["stopping_monitors"],
+    monitors=monitors,
     patience=config["patience"],
-    num_required=config["num_required"]
+    num_required=config["num_required"],
+    wait_initial=config["wait_initial"],
   )
+
   trainer_kwargs = {
     "enable_checkpointing": False,
-    "max_epochs": 30,
+    "max_epochs": 100,
     "accelerator": "auto",
     "gradient_clip_val": 0.5,
     # "precision": "bf16-mixed",
@@ -45,7 +52,7 @@ def do_train(args):
 
   torch.cuda.empty_cache()
   # tuner = Tuner(trainer)
-  # tuner.lr_find(module, datamodule=datamodule, min_lr=2e-5, max_lr=1e-3)
+  # tuner.lr_find(module, datamodule=datamodule, min_lr=1e-6, max_lr=2e-3)
   # tuner.scale_batch_size(module, datamodule=data, init_val=32, max_trials=3)
  
   torch.cuda.empty_cache()
@@ -53,7 +60,7 @@ def do_train(args):
   trainer.fit(module, datamodule=datamodule)
   # module.dequantize()
   trainer.test(module, datamodule=datamodule)
-  module.save(args.save_adapters, args.save_heads)
+  module.save(args.save_adapters)
 
 def do_test(args):
   pass
@@ -119,7 +126,6 @@ if __name__ == "__main__":
   parser_fix.set_defaults(func=do_fix)
 
   parser_train = subparsers.add_parser("train")
-  parser_train.add_argument("--save-heads", type=str)
   parser_train.add_argument("--save-adapters", type=str)
   parser_train.set_defaults(func=do_train)
 

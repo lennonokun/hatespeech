@@ -16,66 +16,71 @@
 	"max_length": 128,
 	"best_model": "tb_logs/hatexplain/version_57/checkpoints/epoch=16-step=2142.ckpt",
 
-	// "model": "google/electra-base-discriminator",
-	// "num_hidden": 768,
-	// "num_layer": 12,
-	// "branch_layer": 9,
-	// "batch_size": 90,
+	"model": "google/electra-base-discriminator",
+	"num_hidden": 768,
+	"batch_size": 64,
 
-	"model": "google/electra-small-discriminator",
-	"num_hidden": 256,
-	"num_layer": 12,
-	"branch_layer": 9,
-	"batch_size": 100,
+	// "model": "google/electra-large-discriminator",
+	// "num_hidden": 1024,
+	// "batch_size": 32,
 
-	"model_type": "fusion",
+	// "model": "google/electra-small-discriminator",
+	// "num_hidden": 256,
+	// "batch_size": 200,
+
+	"model_type": "merge",
 	"quantize": true,
+
+	// "parallel_train": "full",
+
 	"adapter_r": 8,
 	"adapter_alpha": 8,
 	// "adapter_d": 32,
 	// "adapter_b": 2,
-	"adapter_dropout": 0.05,
+	"adapter_dropout": 0.1,
 
 	"stopping_monitors": {
-		"valid_target_f1": 0.005,
-		// "valid_rationale_f1": 0.01,
-		"valid_label_f1": 0.005,
-		"valid_score_mse": -0.03,
+		"target": {
+			"valid_target_f1": 0.005,
+		}, "label": {
+			"valid_label_f1": 0.005,
+		}, "rationale": {
+			"valid_rationale_f1": 0.01,
+		}, "score": {
+			"valid_score_mse": -0.02,
+		}
 	},
 	"num_required": 1,
-	"patience": 5,
+	"patience": 3,
+	"wait_initial": 4,
+	"model_warmup": 4,
 
-	"learning_rate": 5e-4,
+	"learning_rate": 1e-4,
 
-	"head_is_multitoken": ["rationale"],
-	"head_labels": {
-		"label": 3,
-		"target": 11,
-		"rationale": 1,
-		"score": 1,
+	"heads": {
+		"label": [128, 128, 3],
+		"target": [256, 128, 11],
+		"rationale": [256, 1],
+		"score": [256, 1],
 	},
-	"head_layers": {
-		"label": 2,
-		"target": 2,
-		"rationale": 2,
-		"score": 2,
-	},
-	"head_dropout": 0.1,
+	"head_dropout": 0.2,
 	"quick_model": false,
 	"dynamic_length": true,
 
 	// task + dataset selection
+	"merge_base": "adapters/base/lora",
+	"merge_sources": ["label", "score", "target"],
 	"features": ["tokens", "mask"],
 	"active_tasks": {
-		"explain": ["target", "label"],
-		"measuring": ["score"],
+		"explain": ["label"],
+		// "measuring": ["score"],
 	},
 	// MTL + VAT/GAT
 	"mtl_importances": {
 		"label": 1e0,
-		"target": 1e0,
+		"target": 4e0,
 		"rationale": 1e0,
-		"score": 2e0,
+		"score": 1e0,
 	},
 	"mtl_expand_targets": true,
 	"mtl_norm_do": true,

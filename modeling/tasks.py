@@ -3,33 +3,12 @@ from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
 
 import torch
 from torch import nn
-from adapters.heads.base import PredictionHead
 
 from torchmetrics import MetricCollection
 from torchmetrics import classification as clf
 from torchmetrics import regression as reg
 
 from .custom import MaskedBinaryF1, MyBCELoss
-  
-class HateHead(PredictionHead):
-  def __init__(self, model, name, hate_config):
-    super().__init__(name)
-    self.is_multitoken = name in hate_config["head_is_multitoken"]
-    self.config = {
-      "head_type": "hate",
-      "num_labels": hate_config["head_labels"][name],
-      "layers": hate_config["head_layers"][name],
-      "activation_function": "relu",
-      "dropout_prob": hate_config["head_dropout"]
-    }
-    self.build(model)
-
-  def forward(self, input, cls_output=None, attention_mask=None, return_dict=False, **kwargs):
-    hidden = input.last_hidden_state
-    if not self.is_multitoken:
-      hidden = hidden[:, 0, :]
-    output = super().forward(hidden.float()).squeeze(-1)
-    return output
 
 class HateTask(ABC, nn.Module):
   # implemented by subclass
@@ -40,6 +19,7 @@ class HateTask(ABC, nn.Module):
   
   def __init__(
     self,
+    config,
     loss_fn,
     metrics,
     loss_dim=1,
@@ -58,9 +38,28 @@ class HateTask(ABC, nn.Module):
     self.importance = importance
 
     input_dims = input_dims if input_dims is not None else [] 
+    self.head = self.make_head(config, input_dims)
+
+  def make_head(self, config, input_dims):
+    args = []
+    prev_dim = config["num_hidden"]
+    dims = config["heads"][self.name]
+
+    if len(dims) == 0:
+      raise ValueError(f"config['heads']['{self.name}'] must be nonempty")
+
+    for dim in config["heads"][self.name]:
+      args += [
+        nn.Dropout(config["head_dropout"]),
+        nn.Linear(prev_dim, dim),
+        nn.ReLU(),
+        nn.LayerNorm([dim, *input_dims]),
+      ]
+      prev_dim = dim
+    return nn.Sequential(*args[:-2])
 
   @abstractmethod
-  def forward(self, output, batch):
+  def forward(self, hidden, batch):
     raise NotImplementedError
 
   def compute_metrics(self, results, split):
@@ -82,16 +81,18 @@ class RationaleTask(HateTask):
   
   def __init__(self, config):
     super().__init__(
+      config = config,
       loss_fn = MyBCELoss(freq=config["stats"]["rationale_freq"]),
       metrics = MetricCollection({"rationale_f1": MaskedBinaryF1()}),
       importance = config["mtl_importances"]["rationale"],
     )
 
-  def forward(self, output, batch):
+  def forward(self, hidden, batch):
+    logits = self.head(hidden).squeeze(-1)
     return {
-      "logits": output,
+      "logits": logits,
       "trues": batch["rationale"],
-      "preds": torch.gt(output, 0),
+      "preds": torch.gt(logits, 0),
       "hards": torch.gt(batch["rationale"], 0.5),
       "masks": batch["mask"] & (batch["label"][:, 1].gt(0)[:, None]),
     }
@@ -116,17 +117,19 @@ class TargetTask(HateTask):
     )})
 
     super().__init__(
+      config = config,
       loss_fn = loss_fn,
       metrics = metrics,
       importance = config["mtl_importances"]["target"],
       loss_dim = loss_dim,
     )
 
-  def forward(self, output, batch):
+  def forward(self, hidden, batch):
+    logits = self.head(hidden[:, 0, :])
     return {
-      "logits": output,
+      "logits": logits,
       "trues": batch["target"],
-      "preds": torch.gt(output, 0),
+      "preds": torch.gt(logits, 0),
       "hards": torch.gt(batch["target"], 0.5),
     }
 
@@ -142,16 +145,18 @@ class LabelTask(HateTask):
     )})
     
     super().__init__(
+      config = config,
       loss_fn = loss_fn,
       metrics = metrics,
       importance = config["mtl_importances"]["label"],
     )
 
-  def forward(self, output, batch):
+  def forward(self, hidden, batch):
+    logits = self.head(hidden[:, 0, :])
     return {
-      "logits": output,
+      "logits": logits,
       "trues": batch["label"],
-      "preds": torch.argmax(output, dim=-1),
+      "preds": torch.argmax(logits, dim=-1),
       "hards": torch.argmax(batch["label"], dim=-1)
     }
 
@@ -162,14 +167,15 @@ class ScoreTask(HateTask):
 
   def __init__(self, config):
     super().__init__(
+      config = config,
       loss_fn = nn.MSELoss(),
       metrics = MetricCollection({"score_mse": reg.MeanSquaredError()}),
       importance = config["mtl_importances"]["score"],
     )
 
-  def forward(self, output, batch):
+  def forward(self, hidden, batch):
     return {
-      "preds": output,
+      "preds": self.head(hidden[:, 0, :]).squeeze(-1),
       "trues": batch["score"],
     }
 

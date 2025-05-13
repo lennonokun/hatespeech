@@ -11,6 +11,41 @@ from lightning.pytorch.callbacks.callback import Callback
 
 from torchmetrics import Metric
 
+# sourced from https://github.com/kardasbart/MultiLR
+class MultiLR(torch.optim.lr_scheduler._LRScheduler):
+  def __init__(self, optimizer, lambda_factories, last_epoch=-1):
+    self.schedulers = []
+    values = self._get_optimizer_lr(optimizer)
+    for idx, factory in enumerate(lambda_factories):
+      self.schedulers.append(factory(optimizer))
+      values[idx] = self._get_optimizer_lr(optimizer)[idx]
+      self._set_optimizer_lr(optimizer, values)
+    super().__init__(optimizer, last_epoch)
+
+  def get_lr(self):
+    result = []
+    for idx, sched in enumerate(self.schedulers):
+      result.append(sched.get_last_lr()[idx])
+    return result
+  
+  @staticmethod
+  def _set_optimizer_lr(optimizer, values):
+    for param_group, lr in zip(optimizer.param_groups, values):
+      param_group['lr'] = lr
+
+  @staticmethod
+  def _get_optimizer_lr(optimizer):
+    return [group['lr'] for group in optimizer.param_groups]
+
+  def step(self, epoch=None):
+    if self.last_epoch != -1:
+      values = self._get_optimizer_lr(self.optimizer)
+      for idx, sched in enumerate(self.schedulers):
+        sched.step()
+        values[idx] = self._get_optimizer_lr(self.optimizer)[idx]
+        self._set_optimizer_lr(self.optimizer, values)
+    super().step()
+
 class MaskedBinaryAccuracy(Metric):
   def __init__(self, dist_sync_on_step=False):
     super().__init__(dist_sync_on_step=dist_sync_on_step)
@@ -94,18 +129,23 @@ class MyBCELoss(nn.Module):
     return reduce_loss_apply_mask(loss, mask, self.reduce_dim)
 
 class MultiEarlyStopping(Callback):
-  def __init__(self, monitors: Dict[str, float], patience: float, num_required: int):
+  def __init__(self, monitors: Dict[str, float], patience: float, num_required: int, wait_initial: int):
     super().__init__()
     self.monitors = monitors
     self.patience = patience
     self.num_required = num_required
 
+    self.wait_initial = wait_initial
     self.wait_count = 0
     self.prev_scores = {
       name: float("-inf") * thresh for name, thresh in monitors.items()
     }
 
   def _check_early_stopping(self, trainer):
+    if self.wait_initial > 0:
+      self.wait_initial -= 1
+      return
+    
     num_improved = 0
     for name, thresh in self.monitors.items():
       if name in trainer.callback_metrics:

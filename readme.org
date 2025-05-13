@@ -1,5 +1,9 @@
 * notes
 
+** limitations
+- AutoAdapterModel cannot do quantized LoRA
+- adapters.init(AutoModel) cannot do custom heads
+
 ** quantization
 - do not use Trainer(precision=...) ???
 - peft has better support, but much less flexible otherwise
@@ -26,12 +30,16 @@
 
 ** else
 - rationale seems to get stuck at 0.6 f1?
+- warm up heads esp when fusing/merging
 - probably heads should have their own learning rate?
+- more params necessary for target
+- fully separate targets? 
+- why is the adapter fusion 2.4M params
 
 * todo
 
 ** short-term
-- ONLY SET SPECIFICS ACTIVE
+- eval during validation / test?
 - actually save adapters
 - re-add VAT + gradnorm, check if worth
 - configs as mergable files
@@ -49,6 +57,9 @@
 ** long term
 - text augmentation
 - use hatebase for lexicon features
+
+* credits
+- MultiLR sourced from https://github.com/kardasbart/MultiLR
 
 * papers
   - https://bit.kuas.edu.tw/~jni/2024/vol9/s1/36.JNI-S-2023-08-006.pdf
@@ -85,43 +96,6 @@
 
 * results
 
-** rolling n=10 normalization + uncertainty weighing + gradient adversarial training
-
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.559 |
-| test_rationale_f1 |   0.710 |
-| test_target_f1    |   0.688 |
-
-** initial n=10 normalization + uncertainty weighing + gradient adversarial training
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.544 |
-| test_rationale_f1 |   0.609 |
-| test_target_f1    |   0.669 |
-
-** initial n=10 norm (broken) + DWA (T=2) + GAT (eps=0.6)
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.541 |
-| test_rationale_f1 |   0.671 |
-| test_target_f1    |   0.639 |
-
-** initial n=10 norm (broken) + DWA (T=2) + 30 epochs
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.572 |
-| test_rationale_f1 |   0.798 |
-| test_target_f1    |   0.705 |
-
-** initial n=10 norm (fixed) + RW + 10 epochs + r=8 + layers=2
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.592 |
-| test_rationale_f1 |   0.604 |
-| test_score_mse    |   2.031 |
-| test_target_f1    |   0.712 |
-
 ** initial n=10 norm (fixed) + RW + 20 epochs + r=8 + layers=2
 
 | metrics           | results |
@@ -130,3 +104,43 @@
 | test_rationale_f1 |   0.659 |
 | test_score_mse    |   1.936 |
 | test_target_f1    |   0.721 |
+
+** small
+
+*** bn
+
+**** f=64
+| metrics        | Single Task | Single Merge |
+|----------------+-------------+--------------|
+| test_label_f1  |       0.608 |        0.637 |
+| test_score_mse |       1.837 |              |
+
+*** lora
+
+**** r=16 a=16
+
+| metrics        | Single Task | Single Merge |
+|----------------+-------------+--------------|
+| test_label_f1  |       0.644 |        0.637 |
+| test_score_mse |       1.769 |              |
+
+** base
+
+*** bn
+
+**** f=64
+| metrics        | Single Task | Single Merge |
+|----------------+-------------+--------------|
+| test_label_f1  |       0.664 |        0.647 |
+| test_score_mse |       1.457 |              |
+
+*** lora
+
+**** r=8
+
+| metrics        | Single Task | Single Merge |
+|----------------+-------------+--------------|
+| test_label_f1  |       0.658 |        0.657 |
+| test_score_mse |       1.439 |              |
+| test_target_f1 |       0.641 |              |
+

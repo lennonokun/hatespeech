@@ -225,9 +225,12 @@ class HateDatamodule(LightningDataModule):
     return self._get_dataloader("test")
 
 _data_methods = {
-  "std": "dataset",
-  "hydra": "dataset",
+  "full": "dataset",
+  "lora": "dataset",
+  "bn": "dataset",
+  "merge": "dataset",
   "fusion": "dataset",
+  "parallel": "dataset",
   "mtllora": "task",
 }
 def construct_datamodule(config, method=None):
