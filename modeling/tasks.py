@@ -1,201 +1,93 @@
-from abc import ABC, abstractmethod
 from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from pydantic import BaseModel
+# from collections import ChainMap
 
-import torch
-from torch import nn
+from hydra_zen import make_custom_builds_fn
 
-from torchmetrics import MetricCollection
-from torchmetrics import classification as clf
-from torchmetrics import regression as reg
+class Stats(BaseModel):
+  label_freqs: List[float]
+  target_freqs: List[float]
+  rationale_freq: float
 
-from .custom import MaskedBinaryF1, MyBCELoss
-
-class HateTask(ABC, nn.Module):
-  # implemented by subclass
-  name: ClassVar[str]
-  task_type: ClassVar[str]
-  loss_args: ClassVar[List[str]]
-  metrics_args: ClassVar[List[str]]
+class Task(BaseModel):
+  dataset: str
+  # monitors: Dict[str, float]
+  importance: float
+  output_dim: int
+  loss_dim: int
   
-  def __init__(
-    self,
-    config,
-    loss_fn,
-    metrics,
-    loss_dim=1,
-    importance=1.0,
-    input_dims=None,
-  ):
-    ABC.__init__(self)
-    nn.Module.__init__(self)
+class TaskSet(BaseModel):
+  active: List[str]
+  all: Dict[str, Task]
 
-    self.loss_fn = loss_fn
-    self.metrics = {
-      split: metrics.clone(prefix=f"{split}_").cuda()
-      for split in ["train", "valid", "test"]
-    }
-    self.loss_dim = loss_dim
-    self.importance = importance
+  @property
+  def datasets(self) -> List[str]:
+    return list(set(task.dataset for task in self.all.values()))
 
-    input_dims = input_dims if input_dims is not None else [] 
-    self.head = self.make_head(config, input_dims)
+  # @property
+  # def monitors(self) -> Dict[str, float]:
+  #   nested = (task.monitors for task in self.all.values())
+  #   return dict(ChainMap(*nested))
 
-  def make_head(self, config, input_dims):
-    args = []
-    prev_dim = config["num_hidden"]
-    dims = config["heads"][self.name]
+  def get(self, name: str) -> Task:
+    if name not in self.all:
+      raise ValueError(f"invalid task name: {name}")
+    return self.all[name]
 
-    if len(dims) == 0:
-      raise ValueError(f"config['heads']['{self.name}'] must be nonempty")
+  def iter_pairs(self) -> Iterable[Tuple[str, Task]]:
+    for name in self.active:
+      yield name, self.get(name)
 
-    for dim in config["heads"][self.name]:
-      args += [
-        nn.Dropout(config["head_dropout"]),
-        nn.Linear(prev_dim, dim),
-        nn.ReLU(),
-        nn.LayerNorm([dim, *input_dims]),
-      ]
-      prev_dim = dim
-    return nn.Sequential(*args[:-2])
+  def iter_tasks(self) -> Iterable[Task]:
+    for name in self.active:
+      yield self.get(name)
 
-  @abstractmethod
-  def forward(self, hidden, batch):
-    raise NotImplementedError
+builds = make_custom_builds_fn(populate_full_signature=True)
 
-  def compute_metrics(self, results, split):
-    return self.metrics[split](*[results[arg] for arg in self.metrics_args])
+label_task = Task(
+  dataset = "explain",
+  # monitors = {"valid_label_f1": 5e-3},
+  importance = 1e0,
+  output_dim = 3,
+  loss_dim = 1
+)
+target_task = Task(
+  dataset = "explain",
+  # monitors = {"valid_target_f1": 5e-3},
+  importance = 3e0,
+  output_dim = 13,
+  loss_dim = 13
+)
+rationale_task = Task(
+  dataset = "explain",
+  # monitors = {"valid_rationale_f1": 1e-2},
+  importance = 1e0,
+  output_dim = 1,
+  loss_dim = 1,
+)
+score_task = Task(
+  dataset = "measuring",
+  # monitors = {"valid_score_mse": -2e-2},
+  importance = 1e0,
+  output_dim = 1,
+  loss_dim = 1,
+)
+TaskSetCfg = builds(
+  TaskSet,
+  active=[],
+  all={
+    "label": label_task,
+    "rationale": rationale_task,
+    "target": target_task,
+    "score": score_task,
+  }
+)
 
-  def compute_loss(self, results):
-    return self.loss_fn(*[results[arg] for arg in self.loss_args])
+# TODO read from json?
+StatsCfg = builds(
+  Stats,
+  label_freqs = [0.09819006022103104, 0.09066243134140693, 0.12927668585798424],
+  target_freqs = [0.05469525511216994, 0.013053404804447092, 0.006932036264972536, 0.00860300443385613, 0.006104824300178678, 0.03207927999470584, 0.03732380385149891, 0.033535173052743034, 0.013351201111772881, 0.01581629276685858, 0.02658659254847462],
+  rationale_freq = 0.03018080459327523
+)
 
-  def compute(self, hidden, batch, split):
-    results = self.forward(hidden, batch)
-    metrics = self.compute_metrics(results, split)
-    loss = self.compute_loss(results)
-    return metrics, loss
-
-class RationaleTask(HateTask):
-  name = "rationale"
-  loss_args = ["logits", "trues", "masks"]
-  metrics_args = ["preds", "hards", "masks"]
-  
-  def __init__(self, config):
-    super().__init__(
-      config = config,
-      loss_fn = MyBCELoss(freq=config["stats"]["rationale_freq"]),
-      metrics = MetricCollection({"rationale_f1": MaskedBinaryF1()}),
-      importance = config["mtl_importances"]["rationale"],
-    )
-
-  def forward(self, hidden, batch):
-    logits = self.head(hidden).squeeze(-1)
-    return {
-      "logits": logits,
-      "trues": batch["rationale"],
-      "preds": torch.gt(logits, 0),
-      "hards": torch.gt(batch["rationale"], 0.5),
-      "masks": batch["mask"] & (batch["label"][:, 1].gt(0)[:, None]),
-    }
-
-class TargetTask(HateTask):
-  name = "target"
-  loss_args = ["logits", "trues"]
-  metrics_args = ["preds", "hards"]
-  
-  def __init__(self, config):
-    if config["mtl_expand_targets"]:
-      reduce_dim, loss_dim = 0, config["num_target"]
-    else:
-      reduce_dim, loss_dim = None, 1
-
-    loss_fn = MyBCELoss(
-      freq = config["stats"]["target_freqs"],
-      reduce_dim = reduce_dim
-    )
-    metrics = MetricCollection({"target_f1": clf.MultilabelF1Score(
-      num_labels=config["num_target"], average="micro",
-    )})
-
-    super().__init__(
-      config = config,
-      loss_fn = loss_fn,
-      metrics = metrics,
-      importance = config["mtl_importances"]["target"],
-      loss_dim = loss_dim,
-    )
-
-  def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
-    return {
-      "logits": logits,
-      "trues": batch["target"],
-      "preds": torch.gt(logits, 0),
-      "hards": torch.gt(batch["target"], 0.5),
-    }
-
-class LabelTask(HateTask):
-  name = "label"
-  loss_args = ["logits", "trues"]
-  metrics_args = ["preds", "hards"]
-  
-  def __init__(self, config):
-    loss_fn = MyBCELoss(freq=config["stats"]["label_freqs"])
-    metrics = MetricCollection({"label_f1": clf.MulticlassF1Score(
-      num_classes=config["num_label"], average="macro",
-    )})
-    
-    super().__init__(
-      config = config,
-      loss_fn = loss_fn,
-      metrics = metrics,
-      importance = config["mtl_importances"]["label"],
-    )
-
-  def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
-    return {
-      "logits": logits,
-      "trues": batch["label"],
-      "preds": torch.argmax(logits, dim=-1),
-      "hards": torch.argmax(batch["label"], dim=-1)
-    }
-
-class ScoreTask(HateTask):
-  name = "score"
-  loss_args = ["preds", "trues"]
-  metrics_args = ["preds", "trues"]
-
-  def __init__(self, config):
-    super().__init__(
-      config = config,
-      loss_fn = nn.MSELoss(),
-      metrics = MetricCollection({"score_mse": reg.MeanSquaredError()}),
-      importance = config["mtl_importances"]["score"],
-    )
-
-  def forward(self, hidden, batch):
-    return {
-      "preds": self.head(hidden[:, 0, :]).squeeze(-1),
-      "trues": batch["score"],
-    }
-
-_constructors_list = [
-  TargetTask,
-  RationaleTask,
-  LabelTask,
-  ScoreTask,
-]
-_constructors_dict = {
-  x.name: x for x in _constructors_list
-}
-
-def construct_tasks(config):
-  out: Dict[str, Type[HateTask]] = {}
-  for name in config["melt_tasks"]:
-    constructor = _constructors_dict.get(name)
-    if constructor is None:
-      raise ValueError(f"invalid element of config['melt_tasks']: {name}")
-    else:
-      out[name] = constructor(config)
-
-  return out

@@ -1,16 +1,29 @@
-from typing import *
+from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from hydra_zen import builds
+from pydantic import BaseModel
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, RandomSampler
 
+from .tasks import TaskSet
+
+class DatasetInfo(BaseModel):
+  cats: Dict[str, List[str]]
+  path: str
+
+  @property
+  def cols(self):
+    return {k: [f"{k}_{x}" for x in v] for k,v in self.cats.items()}
+
 # TODO shared feature
 # batch sampled
-class DatasetCombinedDataset(Dataset):
-  def __init__(self, config, datasets):
+class CombinedDataset(Dataset):
+  def __init__(self, datasets):
     self.names = list(datasets.keys())
     self.datasets = [datasets[name] for name in self.names]
     self.num_datasets = len(self.datasets)
@@ -38,54 +51,29 @@ class DatasetCombinedDataset(Dataset):
       batches[self.names[i]] = self.datasets[i][dataset_idx]
       batches[self.names[i]]["size"] = len(dataset_idx)
     return batches
-
-class TaskCombinedDataset(Dataset):
-  def __init__(self, config, datasets):
-    self.config = config
-    self.datasets = datasets
-
-    lengths = np.array([len(datasets[name]) for name in config["melt_datasets"]])
-    self.length = np.sum(lengths)
-    self.offsets = np.cumsum(lengths) - lengths
-    self.weights = np.concatenate([np.full(length, 1/length) for length in lengths])
-    self.min_length = int(np.min(lengths))
-
-  def __len__(self):
-    return self.length
-
-  def __getitem__(self, idx):
-    diffs = np.array(idx)[:, None] - self.offsets[None, :]
-    # get indices per name
-    name_reverse_idx = np.argmax(diffs[:, ::-1] >= 0, axis=1)
-    name_idx = (len(self.config["melt_tasks"]) - 1) - name_reverse_idx
-
-    batches = {task: {} for task in self.config["melt_tasks"]}
-    for i, (dataset, task) in enumerate(self.config["melt_pairs"]):
-      curr_name_idx = np.where(name_idx == i)[0]
-      dataset_idx = diffs[curr_name_idx, i]
-
-      if len(dataset_idx) > 0:
-        rows = self.datasets[dataset][dataset_idx]
-        for feature in self.config["features"]:
-          batches[task][feature] = rows[feature]
-        batches[task][task] = rows[task]
-
-      batches[task]["size"] = len(dataset_idx)
-
-    return batches
   
 # batch sampled
 class HateDataset(Dataset):
-  def __init__(self, config: dict, name: str, split: str, multis: List[str], unis: List[str]):
-    self.config = config
-    
-    path = self.config["output_dataset_path"].format(name=name, split=split)
-    self.df = pd.read_parquet(path)
+  name: ClassVar[str]
+  multis: ClassVar[List[str]]
+  unis: ClassVar[List[str]]
+  
+  def __init__(self,
+    batch_size: int,
+    dynamic_length: bool,
+    max_length: int,
+    info: DatasetInfo,
+    split: str,
+  ):
+    self.batch_size = batch_size
+    self.dynamic_length = dynamic_length
+    self.max_length = max_length
+    self.df = pd.read_parquet(info.path.format(name=self.name, split=split))
 
     self.locs = {}
-    for var in multis:
-      self.locs[var] = [self.df.columns.get_loc(col) for col in self.config[f"cols_{var}"]]
-    for var in unis:
+    for var in self.multis:
+      self.locs[var] = [self.df.columns.get_loc(col) for col in info.cols[var]]
+    for var in self.unis:
       self.locs[var] = self.df.columns.get_loc(var)
 
   def __len__(self):
@@ -95,10 +83,9 @@ class HateDataset(Dataset):
     raise NotImplementedError
     
 class ExplainDataset(HateDataset):
-  def __init__(self, config: dict, split: str):
-    multis = ["label", "target"]
-    unis = ["tokens", "mask", "rationale"]
-    super().__init__(config, "explain", split, multis, unis)
+  name = "explain"
+  multis = ["label", "target"]
+  unis = ["tokens", "mask", "rationale"]
 
   def __getitem__(self, idx):
     num_idx = len(idx)
@@ -108,11 +95,11 @@ class ExplainDataset(HateDataset):
     label = np.array(self.df.iloc[idx, self.locs["label"]], dtype=np.float32)
     target = np.array(self.df.iloc[idx, self.locs["target"]], dtype=np.float32)
 
-    if self.config["dynamic_length"]:
+    if self.dynamic_length:
       tokens_list = self.df.iloc[idx, self.locs["tokens"]]
       max_len = max(len(tokens) for tokens in tokens_list)
     else:
-      max_len = self.config["max_length"]
+      max_len = self.max_length
 
     tokens = np.zeros((num_idx, max_len), dtype=np.int32)
     mask = np.zeros((num_idx, max_len), dtype=np.bool_)
@@ -134,10 +121,9 @@ class ExplainDataset(HateDataset):
     }
 
 class MeasuringDataset(HateDataset):
-  def __init__(self, config: dict, split: str):
-    multis = []
-    unis = ["score", "tokens", "mask"]
-    super().__init__(config, "measuring", split, multis, unis)
+  name = "measuring"
+  multis = []
+  unis = ["score", "tokens", "mask"]
     
   def __getitem__(self, idx):
     num_idx = len(idx)
@@ -146,11 +132,11 @@ class MeasuringDataset(HateDataset):
     
     score = np.array(self.df.iloc[idx, self.locs["score"]], dtype=np.float32)
 
-    if self.config["dynamic_length"]:
+    if self.dynamic_length:
       tokens_list = self.df.iloc[idx, self.locs["tokens"]]
       max_len = max(len(tokens) for tokens in tokens_list)
     else:
-      max_len = self.config["max_length"]
+      max_len = self.max_length
 
     tokens = np.zeros((num_idx, max_len), dtype=np.int32)
     mask = np.zeros((num_idx, max_len), dtype=np.bool_)
@@ -167,26 +153,34 @@ class MeasuringDataset(HateDataset):
     }
 
 class HateDatamodule(LightningDataModule):
-  _constructors = {
-    "explain": ExplainDataset,
-    "measuring": MeasuringDataset,
-  }
-  _combine_constructors = {
-    "dataset": DatasetCombinedDataset,
-    "task": TaskCombinedDataset,
-  }
+  _constructors_list: List[type[HateDataset]] = [ExplainDataset, MeasuringDataset]
+  _constructors_dict = {x.name: x for x in _constructors_list}
 
-  def __init__(self, config, method):
+  def __init__(
+    self,
+    batch_size: int,
+    dynamic_length: bool,
+    max_length: int,
+    info: DatasetInfo,
+    tasks: TaskSet
+  ):
     super().__init__()
-    self.config = config
-    self.method = method
-    self.batch_size = config["batch_size"]
+    self.batch_size = batch_size
+    self.dynamic_length = dynamic_length
+    self.max_length = max_length
+    self.info = info
+    self.tasks = tasks
   
   def _select_data(self, split):
-    combiner = self._combine_constructors[self.method]
-    return combiner(self.config, {
-      name: self._constructors[name](self.config, split)
-      for name in self.config["flat_datasets"]
+    return CombinedDataset({
+      name: self._constructors_dict[name](
+        batch_size=self.batch_size,
+        dynamic_length=self.dynamic_length,
+        max_length=self.max_length,
+        info=self.info,
+        split=split,
+      )
+      for name in self.tasks.datasets
     })
   
   def setup(self, stage: str):
@@ -224,20 +218,26 @@ class HateDatamodule(LightningDataModule):
   def test_dataloader(self):
     return self._get_dataloader("test")
 
-_data_methods = {
-  "full": "dataset",
-  "lora": "dataset",
-  "bn": "dataset",
-  "merge": "dataset",
-  "fusion": "dataset",
-  "parallel": "dataset",
-  "mtllora": "task",
-}
-def construct_datamodule(config, method=None):
-  if method is not None:
-    return HateDatamodule(config, method)
-  elif config["model_type"] not in _data_methods:
-    raise ValueError(f"invalid {config['model_type']=}")
+DatasetInfoCfg = builds(
+  DatasetInfo,
+  cats={
+    "target": [
+      "African", "Arab", "Asian", "Caucasian", "Hispanic",
+      "Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
+    ], "label": [
+      "hatespeech", "offensive", "normal"
+    ],
+  },
+  path="data/{name}/output_{split}.parquet"
+)
 
-  method = _data_methods[config["model_type"]]
-  return HateDatamodule(config, method)
+HateDatamoduleCfg = builds(
+  HateDatamodule,
+  batch_size = 64,
+  max_length = 128,
+  dynamic_length = True,
+  info = DatasetInfoCfg,
+  zen_partial = True,
+)
+class PartialDatamodule(Protocol):
+  def __call__(self, tasks: TaskSet) -> HateDatamodule: ...

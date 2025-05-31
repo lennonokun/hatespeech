@@ -139,8 +139,9 @@ _model_constructors = {
   "parallel": ParallelModel,
   "mtllora": MTLLoraModel,
 }
-def construct_module(config):
-  if config["model_type"] not in _model_constructors:
-    raise ValueError(f"invalid {config['model_type']=}")
-  constructor = _model_constructors[config["model_type"]]
-  return constructor(config)
+def construct_module(cfg):
+  method = cfg.module.method.name
+  if method not in _model_constructors:
+    raise ValueError(f"invalid {method=}")
+  constructor = _model_constructors[method]
+  return constructor(cfg)

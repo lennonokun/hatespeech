@@ -1,87 +1,50 @@
+from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
 from abc import ABC, abstractmethod
+from hydra_zen import make_custom_builds_fn
 
-import numpy as np
 import torch
 from torch.nn import functional as F
 from torch import nn
 
-class MTLGradNorm(nn.Module):
-  def __init__(self, config):
-    super().__init__()
-    self.config = config
-    self.weights = None
-    self.history = []
-    self.wait = 0
-
-  def reset(self):
-    self.weights = None
-    self.history = []
-
-  def compute_norms(self, losses_flat, norm_layers):
-    norms = []
-    for loss in losses_flat:
-      grad = torch.autograd.grad(
-        loss, norm_layers, create_graph=True, retain_graph=True
-      )[0].detach()
-      norms.append(torch.norm(grad))
-    return torch.stack(norms)
-
-  def forward(self, losses, norm_layers, split):
-
-    if split == "train":
-      self.wait += 1
-
-      if self.wait == self.config["mtl_norm_period"]:
-        self.history.append(self.compute_norms(losses, norm_layers))
-
-        if len(self.history) > self.config["mtl_norm_length"]:
-          self.history.pop(0)
-        
-        mean_norms = torch.mean(torch.stack(self.history), dim=0) 
-        self.weights = torch.mean(mean_norms) / (mean_norms + 1e-8)
-        self.wait = 0
-
-    if self.weights is not None:
-      return self.weights
-    else:
-      return torch.ones_like(losses)
+from .tasks import TaskSet
 
 class MTLLoss(ABC, nn.Module):
-  def __init__(self, config, tasks):
+  name: ClassVar[str]
+
+  def __init__(self, dwa_t, tasks):
     ABC.__init__(self)
     nn.Module.__init__(self)
 
-    self.config = config
-    self.losses_dim = sum(task.loss_dim for task in tasks.values())
+    self.dwa_t = dwa_t
+    self.tasks = tasks
+
+    self.losses_dim = sum(task.loss_dim for task in tasks.iter_tasks())
     self.loss_importances = torch.cat([
       torch.full((task.loss_dim,), task.importance, dtype=torch.float32, device="cuda")
-      for task in tasks.values()
+      for task in tasks.iter_tasks()
     ], dim=0)
     self.loss_importances /= torch.mean(self.loss_importances)
-    self.grad_norm = MTLGradNorm(config) if config["mtl_norm_do"] else None
+    self.after_init()
 
-  def forward(self, losses, norm_layers, external_weights, split):
+  def after_init(self):
+    pass
+
+  def forward(self, losses, external_weights, split):
     # ensure that order is consistent
-    losses = [losses[task_name] for task_name in self.config["melt_tasks"]]
+    losses = [losses[name] for name in self.tasks.active]
     losses = torch.cat([torch.atleast_1d(loss) for loss in losses], dim=0)
     external_weights *= self.loss_importances
-    if self.grad_norm is not None and norm_layers is not None:
-      external_weights *= self.grad_norm(losses, norm_layers, split)
 
     return self.compute_loss(losses, external_weights, split)
-
-  def reset_norms(self):
-    if self.grad_norm:
-      self.grad_norm.reset()
 
   @abstractmethod
   def compute_loss(self, losses, external_weights, split):
     raise NotImplementedError
 
 class UWLoss(MTLLoss):
-  def __init__(self, config, tasks):
-    super().__init__(config, tasks)
-
+  name = "uw"
+  
+  def after_init(self): 
     self.sigma = nn.Parameter(torch.zeros(self.losses_dim))
 
   # cannot distinguish between internal and external weights
@@ -91,9 +54,9 @@ class UWLoss(MTLLoss):
     return 0.5 * (losses / weights ** 2).sum() + weights.prod().log()
 
 class DWALoss(MTLLoss):
-  def __init__(self, config, tasks):
-    super().__init__(config, tasks)
+  name = "dwa"
 
+  def after_init(self):
     self.history = []
 
   def compute_loss(self, losses, external_weights, split):
@@ -102,31 +65,38 @@ class DWALoss(MTLLoss):
     else:
       ratios = torch.ones(self.losses_dim).cuda()
 
-    if split == "train" and self.config["mtl_weighing"] == "dwa":
+    if split == "train":
       self.history.append(losses.detach())
       if len(self.history) > 2:
         self.history.pop(0)
 
-    weights = F.softmax(ratios / self.config["mtl_dwa_T"], dim=0)
+    weights = F.softmax(ratios / self.dwa_t, dim=0)
     return losses @ (weights * external_weights)
     
 class RWLoss(MTLLoss):
-  def __init__(self, config, tasks):
-    super().__init__(config, tasks)
+  name = "rw"
 
   def compute_loss(self, losses, external_weights, split):
     weights = F.softmax(torch.rand(self.losses_dim, device="cuda"), dim=0)
     return losses @ (weights * external_weights)
   
-_constructors = {
-  "uw": UWLoss,
-  "dwa": DWALoss,
-  "rw": RWLoss,
-}
+_constructors_list = [UWLoss, DWALoss, RWLoss]
+_constructors_dict = {x.name: x for x in _constructors_list}
+# TODO do something similar to taskset with individual configs? idk
+def construct_mtl_loss(method, dwa_t, tasks) -> MTLLoss:
+  constructor = _constructors_dict.get(method)
+  if constructor is None:
+    raise ValueError(f"invalid MTL method: {method}")
 
-def construct_mtl_loss(config, tasks):
-  if config["mtl_weighing"] not in _constructors:
-    raise ValueError(f"invalid option {config['mtl_weighing']=}")
+  return constructor(dwa_t, tasks)
 
-  constructor = _constructors[config["mtl_weighing"]]
-  return constructor(config, tasks)
+builds = make_custom_builds_fn(populate_full_signature=True)
+
+MTLLossCfg = builds(
+  construct_mtl_loss,
+  method = "rw",
+  dwa_t = 2.0,
+  zen_partial = True
+)
+class PartialMTLLoss(Protocol):
+  def __call__(self, tasks: TaskSet) -> MTLLoss: ...
