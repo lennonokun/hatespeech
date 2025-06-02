@@ -45,6 +45,10 @@ class MultiEarlyStopping(Callback):
   def on_validation_end(self, trainer, pl_module):
     self._check_early_stopping(trainer)
 
+# TODO allow for selection?
+def build_callbacks(progress: Callback, stopping: Callback):
+  return [progress, stopping]
+
 builds = make_custom_builds_fn(populate_full_signature=True)
 
 MultiEarlyStoppingCfg = builds(
@@ -65,6 +69,12 @@ RichProgressBarCfg = builds(
   leave=True
 )
 
+CallbacksCfg = builds(
+  build_callbacks,
+  progress=RichProgressBarCfg,
+  stopping=MultiEarlyStoppingCfg,
+)
+
 LoggerCfg = builds(
   MLFlowLogger,
   experiment_name = "hatespeech",
@@ -73,7 +83,7 @@ LoggerCfg = builds(
 
 TrainerCfg = builds(
   Trainer,
-  callbacks = [MultiEarlyStoppingCfg],
+  callbacks = CallbacksCfg,
   logger = LoggerCfg,
   max_epochs = 100,
   enable_checkpointing = False,
