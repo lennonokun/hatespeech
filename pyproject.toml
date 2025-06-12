@@ -26,3 +26,9 @@ dependencies = [
 
 [dependency-groups]
 dev = []
+
+[tool.pyright]
+reportPrivateImportUsage = false # transformers dynamic imports
+reportWildcardImportFromLibrary = false
+reportRedeclaration = false
+extraPaths = ["transformers"]

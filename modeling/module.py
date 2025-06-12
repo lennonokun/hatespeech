@@ -1,25 +1,22 @@
 from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
 from pydantic import BaseModel
-from hydra_zen import builds
+from hydra_zen import store
 
 import numpy as np
 import torch
 
-from transformers import AutoModel, ElectraModel, BitsAndBytesConfig
-
-import adapters
-from adapters.models.bert.mixin_bert import BertModelAdaptersMixin
-from adapters import AdapterConfig, LoRAConfig
-
 from bitsandbytes.optim import *
 from torch.optim.lr_scheduler import *
+from transformers import ElectraModel, BitsAndBytesConfig, AutoModel
 
 from lightning import LightningModule
 
+from .methods import AdapterMethod
 from .heads import HateHeads
 from .mtl_loss import MTLLoss
 from .tasks import TaskSet
 from .custom import MultiLR
+from .utils import *
 
 class HateOptimization(BaseModel):
   learning_rate: float
@@ -60,30 +57,11 @@ class HateOptimization(BaseModel):
     scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
     return [optimizer], [scheduler_dict]
 
-class AdapterEncoder(BertModelAdaptersMixin, ElectraModel): # pyright: ignore
-  ...
-
-def build_encoder(
-  model: ElectraModel,
-  adapter_config: AdapterConfig,
-) -> AdapterEncoder:
-  adapters.init(model)
-  model = cast(AdapterEncoder, model)
-
-  model.add_adapter("adapter", adapter_config)
-  # model.set_active_adapters(["adapter"])
-  model.train_adapter("adapter") # pyright: ignore
-  
-  for name, param in model.named_parameters():
-    if "adapter" in name or "lora" in name:
-      param.data = param.data.to(torch.bfloat16)
-  
-  return model
-
 class HateModule(LightningModule):
   def __init__(
     self,
-    encoder: AdapterEncoder,
+    model: ElectraModel,
+    method: AdapterMethod,
     heads: HateHeads,
     optimization: HateOptimization,
     tasks: TaskSet,
@@ -92,7 +70,7 @@ class HateModule(LightningModule):
     super().__init__()
     # Self.save_hyperparameters()
 
-    self.encoder = encoder
+    self.encoder = method.apply(model)
     self.heads = heads
     self.optimization = optimization
     self.tasks = tasks
@@ -110,11 +88,6 @@ class HateModule(LightningModule):
     for k, v in no_grad_params:
       print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
 
-  def adjust_dtypes(self):
-    for name, param in self.encoder.named_parameters():
-      if "adapter" in name or "lora" in name:
-        param.data = param.data.to(torch.bfloat16)
-
   def save(self, dest):
     if dest is not None:
       self.encoder.save_all_adapters(dest)
@@ -127,11 +100,11 @@ class HateModule(LightningModule):
 
   def forward(self, batches, split):
     metricss, losses, sizes = {}, {}, {}
-    for set_name in self.tasks.datasets:
+    for set_name in self.tasks.datasets():
       batch = batches[set_name]
       hidden = self.forward_base(batch)
 
-      for task_name, task in self.tasks.iter_pairs():
+      for task_name, task in self.tasks.items():
         if task.dataset == set_name:
           metricss[task_name], losses[task_name] = self.heads[task_name].compute(hidden, batch, split)
           sizes[task_name] = batch["size"]
@@ -141,7 +114,7 @@ class HateModule(LightningModule):
   def loss_weights(self, sizes):
     loss_counts = torch.Tensor(np.concatenate([
       np.full(task.loss_dim, sizes[name])
-      for name, task in self.tasks.iter_pairs()
+      for name, task in self.tasks.items()
     ], axis=0)).to(self.encoder.device)
     return loss_counts / loss_counts.mean()
 
@@ -194,7 +167,7 @@ class HateModule(LightningModule):
     return self.split_step(batch, "test")
 
   def on_split_epoch_end(self, split):
-    for name in self.tasks.active:
+    for name in self.tasks.names():
       self.heads[name].metrics[split].reset()
 
   def on_train_epoch_end(self):
@@ -206,41 +179,38 @@ class HateModule(LightningModule):
   def on_test_epoch_end(self):
     self.on_split_epoch_end("test")
 
-OptimizationCfg = builds(
+quant_store = store(group="quantization")
+quant_store(fbuilds(
+  BitsAndBytesConfig,
+  load_in_4bit=True,
+  bnb_4bit_quant_type="nf4",
+  bnb_4bit_use_double_quant=True,
+  bnb_4bit_compute_dtype="bfloat16",
+), name="nf4-double")
+
+model_store = store(group="model")
+model_store(fbuilds(
+  AutoModel.from_pretrained,
+  pretrained_model_name_or_path="google/electra-small-discriminator",
+  device_map="auto",
+  torch_dtype="bfloat16",
+  low_cpu_mem_usage=True,
+  quantization_config="${quantization}",
+), name="electra-small")
+
+optimization_store = store(group="optimization")
+optimization_store(fbuilds(
   HateOptimization,
   learning_rate=1e-4,
   warmup=4,
-)
+), name="default")
 
-BnbCfg = builds(
-  BitsAndBytesConfig,
-  load_in_4bit = True,
-  bnb_4bit_quant_type = "nf4",
-  bnb_4bit_use_double_quant = True,
-  bnb_4bit_compute_dtype = "bfloat16",
-)
-
-# todo model config?
-BaseEncoderCfg = builds(
-  AutoModel.from_pretrained,
-  pretrained_model_name_or_path="google/electra-small-discriminator",
-  low_cpu_mem_usage=True,
-  device_map="auto",
-  torch_dtype="bfloat16",
-  quantization_config=BnbCfg,
-)
-
-# todo: multiple options
-AdapterCfg = builds(
-  LoRAConfig,
-  r=8,
-  alpha=8,
-  dropout=0.1,
-  dtype="bfloat16",
-)
-
-EncoderCfg = builds(
-  build_encoder,
-  model=BaseEncoderCfg,
-  adapter_config=AdapterCfg,
+HateModuleCfg = fbuilds(
+  HateModule,
+  method="${method}",
+  model="${model}",
+  optimization="${optimization}",
+  heads="${heads}",
+  tasks="${tasks}",
+  mtl_loss="${mtl_loss}",
 )

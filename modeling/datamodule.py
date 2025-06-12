@@ -1,10 +1,11 @@
-from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from typing import *
 from hydra_zen import builds
 from pydantic import BaseModel
 
 import numpy as np
 import pandas as pd
-from pathlib import Path
+import json
+# from pathlib import Path
 
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
@@ -13,12 +14,16 @@ from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, Random
 from .tasks import TaskSet
 
 class DatasetInfo(BaseModel):
+  dataset_path: str
   cats: Dict[str, List[str]]
-  path: str
 
   @property
   def cols(self):
     return {k: [f"{k}_{x}" for x in v] for k,v in self.cats.items()}
+
+  @classmethod
+  def from_config(cls, col_info_path: str, dataset_path: str):
+    return cls(dataset_path=dataset_path, cats=json.load(open(col_info_path, "r")))
 
 # TODO shared feature
 # batch sampled
@@ -68,7 +73,7 @@ class HateDataset(Dataset):
     self.batch_size = batch_size
     self.dynamic_length = dynamic_length
     self.max_length = max_length
-    self.df = pd.read_parquet(info.path.format(name=self.name, split=split))
+    self.df = pd.read_parquet(info.dataset_path.format(name=self.name, split=split))
 
     self.locs = {}
     for var in self.multis:
@@ -180,7 +185,7 @@ class HateDatamodule(LightningDataModule):
         info=self.info,
         split=split,
       )
-      for name in self.tasks.datasets
+      for name in self.tasks.datasets()
     })
   
   def setup(self, stage: str):
@@ -219,25 +224,18 @@ class HateDatamodule(LightningDataModule):
     return self._get_dataloader("test")
 
 DatasetInfoCfg = builds(
-  DatasetInfo,
-  cats={
-    "target": [
-      "African", "Arab", "Asian", "Caucasian", "Hispanic",
-      "Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
-    ], "label": [
-      "hatespeech", "offensive", "normal"
-    ],
-  },
-  path="data/{name}/output_{split}.parquet"
+  DatasetInfo.from_config,
+  col_info_path="data/col_info.json",
+  dataset_path="data/{name}/output_{split}.parquet"
 )
-
 HateDatamoduleCfg = builds(
   HateDatamodule,
   batch_size = 64,
   max_length = 128,
   dynamic_length = True,
-  info = DatasetInfoCfg,
-  zen_partial = True,
+  info=DatasetInfoCfg,
+  tasks="${tasks}",
 )
-class PartialDatamodule(Protocol):
-  def __call__(self, tasks: TaskSet) -> HateDatamodule: ...
+
+# class PartialDatamodule(Protocol):
+#   def __call__(self, tasks: TaskSet) -> HateDatamodule: ...

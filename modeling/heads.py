@@ -1,19 +1,27 @@
-from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from typing import *
+from pydantic import BaseModel
 from abc import ABC, abstractmethod
-from hydra_zen import make_custom_builds_fn
 
-import torch
+import json
+import torch as pt
 from torch import nn
-
+from transformers import PreTrainedModel
 from torchmetrics import MetricCollection
 from torchmetrics import classification as clf, regression as reg
+from hydra_zen import store
 
-from transformers import PreTrainedModel
-
+from .utils import *
 from .custom import MaskedBinaryF1, MyBCELoss
-from .tasks import TaskSet, Stats
+from .tasks import TaskSet
 
-builds = make_custom_builds_fn(populate_full_signature=True)
+class Stats(BaseModel):
+  label_freqs: List[float]
+  target_freqs: List[float]
+  rationale_freq: float
+
+  @classmethod
+  def from_json(cls, path: str):
+    return cls(**json.load(open(path, "r")))
 
 class HateHead(ABC, nn.Module):
   # implemented by subclass
@@ -105,8 +113,8 @@ class RationaleHead(HateHead):
     return {
       "logits": logits,
       "trues": batch["rationale"],
-      "preds": torch.gt(logits, 0),
-      "hards": torch.gt(batch["rationale"], 0.5),
+      "preds": pt.gt(logits, 0),
+      "hards": pt.gt(batch["rationale"], 0.5),
       "masks": batch["mask"] & (batch["label"][:, 1].gt(0)[:, None]),
     }
 
@@ -128,8 +136,8 @@ class TargetHead(HateHead):
     return {
       "logits": logits,
       "trues": batch["target"],
-      "preds": torch.gt(logits, 0),
-      "hards": torch.gt(batch["target"], 0.5),
+      "preds": pt.gt(logits, 0),
+      "hards": pt.gt(batch["target"], 0.5),
     }
 
 class LabelHead(HateHead):
@@ -150,8 +158,8 @@ class LabelHead(HateHead):
     return {
       "logits": logits,
       "trues": batch["label"],
-      "preds": torch.argmax(logits, dim=-1),
-      "hards": torch.argmax(batch["label"], dim=-1)
+      "preds": pt.argmax(logits, dim=-1),
+      "hards": pt.argmax(batch["label"], dim=-1)
     }
 
 class ScoreHead(HateHead):
@@ -181,13 +189,12 @@ class HateHeads(nn.Module):
     dropout: float,
     shape: List[int],
     tasks: TaskSet,
-    encoder: PreTrainedModel,
+    model: PreTrainedModel,
     stats: Stats
   ):
     super().__init__()
     mapping = {}
-    for name in tasks.active:
-      task = tasks.get(name)
+    for name, task in tasks.items():
       constructor = self._constructors_dict.get(name)
       if task is None or constructor is None:
         raise ValueError(f"invalid task name: {name}")
@@ -195,7 +202,7 @@ class HateHeads(nn.Module):
       mapping[name] = constructor(
         dropout = dropout,
         shape = shape,
-        hidden_size = encoder.config.hidden_size,
+        hidden_size = model.config.hidden_size,
         output_dim = task.output_dim,
         stats = stats,
       )
@@ -204,11 +211,14 @@ class HateHeads(nn.Module):
   def __getitem__(self, name: str) -> HateHead:
     return cast(HateHead, self.mapping[name])
 
-HateHeadsCfg = builds(
+StatsCfg = fbuilds(Stats.from_json, path="data/stats.json")
+
+heads_store = store(group="heads")
+heads_store(fbuilds(
   HateHeads,
-  dropout = 0.2,
-  shape = [128, 128],
-  zen_partial = True,
-)
-class PartialHeads(Protocol):
-  def __call__(self, tasks: TaskSet, encoder: PreTrainedModel, stats: Stats) -> HateHeads: ...
+  dropout=0.2,
+  shape=[128, 128],
+  model="${model}",
+  stats=StatsCfg, 
+  tasks="${tasks}",
+), name="default")
