@@ -10,17 +10,6 @@ from hydra.conf import HydraConf, JobConf
 # from preprocessing import load_stats, do_fix, construct_preprocessor
 from modeling import *
 
-# TODO restructure like lightning-hydra-zen-template
-# TODO standardize TaskSet vs Heads (set or plural)
-# TODO add PreTrainedModel to custom types?
-# TODO separate heads loss + metrics ? (loss could go to mtlloss?)
-# TODO re-add task-combined dataset for mtllora? (but it performed much more poorly)
-# TODO make sure WeightedSampling good
-# TODO make HateDatasets something before HateDataModule?
-# TODO HateHeads hidden_size 
-# TODO top-level + interpolated stores vs packaged stores
-# TODO just one paths/info config instead of stats + datasetinfo
-
 TrainCfg = make_config(
   hydra_defaults=[
     "_self_",
@@ -69,7 +58,6 @@ def train(module: HateModule, datamodule: HateDatamodule, trainer: Trainer):
   # tuner.scale_batch_size(module, datamodule=data, init_val=32, max_trials=3)
  
   # torch.cuda.empty_cache()
-  # trainer.logger.log_hyperparams(cfg) # pyright: ignore[reportOptionalMemberAccess]
   # trainer.fit(module, datamodule=datamodule)
   # # module.dequantize()
   # trainer.test(module, datamodule=datamodule)

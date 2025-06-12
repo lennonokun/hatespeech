@@ -42,11 +42,21 @@ active tasks + datasets --> dataset/dataloader
 
 * todo
 
+** ideas
+- restructure like lightning-hydra-zen-template
+- standardize TaskSet vs Heads (set or plural)
+- add PreTrainedModel to custom types?
+- separate heads loss + metrics ? (loss could go to mtlloss?)
+- re-add task-combined dataset for mtllora? (but it performed much more poorly)
+- make sure WeightedSampling good
+- make HateDatasets something before HateDataModule?
+- just one paths/info config instead of stats + datasetinfo
+
 ** short-term
+- partition targets with different models and merge?
 - eval during validation / test?
 - actually save adapters
 - re-add VAT + gradnorm, check if worth
-- configs as mergable files
 - fixed step epochs with equal sampling from datasets?
 - task batches should include all dataset labels
 - separate data loading into its own module

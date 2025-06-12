@@ -1,6 +1,8 @@
 from typing import *
-from pydantic import BaseModel
+import numpy.typing as npt
+from pydantic import BaseModel, model_validator
 
+import numpy as np
 from hydra_zen import store
 from .utils import *
 
@@ -10,6 +12,15 @@ class Task(BaseModel):
   importance: float
   output_dim: int
   loss_dim: int
+  mask: Any = None
+
+  @model_validator(mode="after")
+  def val(self):
+    # TODO this would mean extraneous head output
+    if self.mask is None:
+      self.mask = np.ones(self.loss_dim, dtype=np.bool_)
+    self.mask = np.array(self.mask, dtype=np.bool_)
+    return self
   
 # TODO maybe UserDict?
 class TaskSet:
@@ -55,8 +66,8 @@ TargetTaskCfg = fbuilds(
   dataset="explain",
   monitor=("valid_target_f1", 5e-3),
   importance=3e0,
-  output_dim=13,
-  loss_dim=13,
+  output_dim=11,
+  loss_dim=11,
 )
 RationaleTaskCfg = fbuilds(
   Task,

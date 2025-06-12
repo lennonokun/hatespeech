@@ -124,7 +124,7 @@ class TargetHead(HateHead):
   metrics_args = ["preds", "hards"]
   
   def make_loss(self):
-    return MyBCELoss(freq=self.stats.target_freqs)
+    return MyBCELoss(freq=self.stats.target_freqs, reduce_dim=0)
 
   def make_metrics(self):
     return MetricCollection({"target_f1": clf.MultilabelF1Score(

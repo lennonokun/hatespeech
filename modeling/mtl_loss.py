@@ -18,7 +18,7 @@ class MTLLoss(ABC, nn.Module):
 
     self.losses_dim = sum(task.loss_dim for task in tasks.values())
     self.loss_importances = torch.cat([
-      torch.full((task.loss_dim,), task.importance, dtype=torch.float32, device="cuda")
+      task.importance * torch.Tensor(task.mask).cuda()
       for task in tasks.values()
     ], dim=0)
     self.loss_importances /= torch.mean(self.loss_importances)

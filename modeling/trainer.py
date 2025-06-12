@@ -99,5 +99,5 @@ TrainerCfg = fbuilds(
   accelerator="auto",
   gradient_clip_val=0.5,
   devices=1,
-  limit_train_batches=1.0,
+  # limit_train_batches=1.0,
 )
