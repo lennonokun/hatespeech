@@ -66,7 +66,7 @@ MultiEarlyStoppingCfg = fbuilds(
   MultiEarlyStopping,
   tasks="${tasks}",
   num_required=1,
-  patience=3,
+  patience=5,
   wait_initial=4,
 )
 

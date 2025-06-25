@@ -8,7 +8,8 @@ from adapters import composition as ac
 from transformers import ElectraModel
 from adapters.models.bert.mixin_bert import BertModelAdaptersMixin
 
-from hydra_zen import builds, store, make_config
+from hydra_zen import builds, store
+from omegaconf import MISSING
 from .utils import *
 
 class AdapterModel(BertModelAdaptersMixin, ElectraModel): # pyright: ignore
@@ -38,6 +39,13 @@ class AdapterMethod(ABC):
       if "adapter" in name or "lora" in name:
         param.data = param.data.to(pt.bfloat16)
 
+class NoAdapterMethod(AdapterMethod):
+  def __init__(self):
+    super().__init__()
+
+  def _apply(self, model):
+    pass
+
 class SingleAdapterMethod(AdapterMethod):
   def __init__(self, adapter: ad.AdapterConfig):
     super().__init__()
@@ -48,9 +56,11 @@ class SingleAdapterMethod(AdapterMethod):
     model.train_adapter("adapter") # pyright: ignore
 
 class MergeAdapterMethod(AdapterMethod):
-  def __init__(self, source_base: str, sources: List[str]):
+  def __init__(self, source_base: str, sources: List[str], svd_rank: int):
+    super().__init__()
     self.source_base = source_base
     self.sources = sources
+    self.svd_rank = svd_rank
 
   def _apply(self, model):
     self.load_sources(model, self.source_base, self.sources)
@@ -58,12 +68,13 @@ class MergeAdapterMethod(AdapterMethod):
       adapter_name="merged",
       adapter_list=self.sources, # TODO INCORRECT
       combine_strategy="lora_delta_w_svd",
-      svd_rank=8,
+      svd_rank=self.svd_rank,
     )
     model.train_adapter("merged") # pyright: ignore
 
 class FuseAdapterMethod(AdapterMethod):
   def __init__(self, source_base: str, sources: List[str]):
+    super().__init__()
     self.source_base = source_base
     self.sources = sources
 
@@ -74,40 +85,37 @@ class FuseAdapterMethod(AdapterMethod):
     model.train_adapter_fusion(fusion)
 
 method_store = store(group="method", to_config=remove_types)
+method_store(builds(NoAdapterMethod), name="full")
+for r in [8, 16, 24, 32]:
+  method_store(builds(
+    SingleAdapterMethod,
+    adapter=builds(
+      ad.LoRAConfig,
+      r=r,
+      alpha=r,
+      dropout=0.1,
+      dtype="bfloat16",
+    )
+  ), name=f"lora{r}")
+  method_store(builds(
+    MergeAdapterMethod,
+    source_base=MISSING,
+    sources=MISSING,
+    svd_rank=r,
+  ), name=f"merge{r}")
+for f in [64, 32, 16]:
+  method_store(builds(
+    SingleAdapterMethod,
+    adapter=builds(
+      ad.AdapterPlusConfig,
+      reduction_factor=f
+    )
+  ), name=f"aplus{f}")
 method_store(builds(
-  SingleAdapterMethod,
-  adapter=builds(
-    ad.LoRAConfig,
-    r=8,
-    alpha=8,
-    dropout=0.1,
-    dtype="bfloat16",
-  )
-), name="lora8")
-method_store(builds(
-  SingleAdapterMethod,
-  adapter=builds(
-    ad.LoRAConfig,
-    r=16,
-    alpha=16,
-    dropout=0.1,
-    dtype="bfloat16",
-  )
-), name="lora16")
-method_store(builds(
-  SingleAdapterMethod,
-  adapter=builds(
-    ad.AdapterPlusConfig,
-    reduction_factor=64
-  )
-), name="aplus64")
-method_store(builds(
-  SingleAdapterMethod,
-  adapter=builds(
-    ad.AdapterPlusConfig,
-    reduction_factor=16
-  )
-), name="aplus16")
+  FuseAdapterMethod,
+  source_base=MISSING,
+  sources=MISSING,
+), name="fuse")
 
 # class FullModel(BaseModel):
 #   def __init__(self, config):

@@ -16,12 +16,12 @@ class MTLLoss(ABC, nn.Module):
     nn.Module.__init__(self)
     self.tasks = tasks
 
-    self.losses_dim = sum(task.loss_dim for task in tasks.values())
     self.loss_importances = torch.cat([
-      task.importance * torch.Tensor(task.mask).cuda()
+      torch.full([task.mask_sum], task.importance, device="cuda")
       for task in tasks.values()
     ], dim=0)
     self.loss_importances /= torch.mean(self.loss_importances)
+    self.losses_dim = self.loss_importances.shape[0]
 
   def forward(self, losses, external_weights, split):
     # ensure that order is consistent

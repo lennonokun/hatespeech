@@ -12,6 +12,7 @@ class Task(BaseModel):
   importance: float
   output_dim: int
   loss_dim: int
+  shrink_output: bool
   mask: Any = None
 
   @model_validator(mode="after")
@@ -21,6 +22,10 @@ class Task(BaseModel):
       self.mask = np.ones(self.loss_dim, dtype=np.bool_)
     self.mask = np.array(self.mask, dtype=np.bool_)
     return self
+
+  @property
+  def mask_sum(self):
+    return np.sum(self.mask)
   
 # TODO maybe UserDict?
 class TaskSet:
@@ -59,15 +64,17 @@ LabelTaskCfg = fbuilds(
   monitor=("valid_label_f1", 5e-3),
   importance=1e0,
   output_dim=3,
-  loss_dim=1
+  loss_dim=1,
+  shrink_output=False,
 )
 TargetTaskCfg = fbuilds(
   Task,
   dataset="explain",
-  monitor=("valid_target_f1", 5e-3),
+  monitor=("valid_target_micro_f1", 5e-3),
   importance=3e0,
   output_dim=11,
   loss_dim=11,
+  shrink_output=True,
 )
 RationaleTaskCfg = fbuilds(
   Task,
@@ -76,6 +83,7 @@ RationaleTaskCfg = fbuilds(
   importance=1e0,
   output_dim=1,
   loss_dim=1,
+  shrink_output=False,
 )
 ScoreTaskCfg = fbuilds(
   Task,
@@ -84,6 +92,7 @@ ScoreTaskCfg = fbuilds(
   importance=1e0,
   output_dim=1,
   loss_dim=1,
+  shrink_output=False,
 )
 
 tasks_store = store(group="tasks", to_config=remove_types)

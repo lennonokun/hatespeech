@@ -1,13 +1,13 @@
 from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
 from pydantic import BaseModel
-from hydra_zen import store
+from hydra_zen import just, store
 
 import numpy as np
 import torch
 
 from bitsandbytes.optim import *
 from torch.optim.lr_scheduler import *
-from transformers import ElectraModel, BitsAndBytesConfig, AutoModel
+from transformers import ElectraModel, BitsAndBytesConfig, QuantoConfig, AutoModel
 
 from lightning import LightningModule
 
@@ -20,13 +20,14 @@ from .utils import *
 
 class HateOptimization(BaseModel):
   learning_rate: float
+  head_coef: float
   warmup: int
 
   def build_head_scheduler(self, optimizer):
     return CosineAnnealingLR(
       optimizer,
       T_max=1,
-      eta_min=0.05*self.learning_rate,
+      eta_min=0.01*self.head_coef*self.learning_rate,
     )
 
   def build_encoder_scheduler(self, optimizer):
@@ -48,14 +49,33 @@ class HateOptimization(BaseModel):
     )
 
   def build(self, head_params, encoder_params):
-    optimizer = PagedAdamW32bit([
-      {"params": head_params, "lr": self.learning_rate},
-      {"params": encoder_params, "lr": 5 * self.learning_rate}
-    ])
+    optimizer = PagedAdamW32bit(params=list(head_params)+list(encoder_params), lr=self.learning_rate)
+    # scheduler = SequentialLR(
+    #   optimizer,
+    #   schedulers=[
+    #     LinearLR(
+    #       optimizer,
+    #       start_factor=0.01,
+    #       end_factor=1.0,
+    #       total_iters=self.warmup,
+    #     ), CosineAnnealingLR(
+    #       optimizer,
+    #       T_max=1,
+    #       eta_min=0.01*self.learning_rate,
+    #     )
+    #   ],
+    #   milestones=[self.warmup],
+    # )
+    return optimizer
 
-    scheduler = MultiLR(optimizer, [self.build_head_scheduler, self.build_encoder_scheduler])
-    scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
-    return [optimizer], [scheduler_dict]
+    # optimizer = PagedAdamW32bit([
+    #   {"params": head_params, "lr": self.head_coef*self.learning_rate},
+    #   {"params": encoder_params, "lr": self.learning_rate}
+    # ])
+
+    # scheduler = MultiLR(optimizer, [self.build_head_scheduler, self.build_encoder_scheduler])
+    # scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
+    # return [optimizer], [scheduler_dict]
 
 class HateModule(LightningModule):
   def __init__(
@@ -66,6 +86,7 @@ class HateModule(LightningModule):
     optimization: HateOptimization,
     tasks: TaskSet,
     mtl_loss: MTLLoss,
+    output_path: str | None,
   ):
     super().__init__()
     # Self.save_hyperparameters()
@@ -75,6 +96,7 @@ class HateModule(LightningModule):
     self.optimization = optimization
     self.tasks = tasks
     self.mtl_loss = mtl_loss
+    self.output_path = output_path
 
   def vis_params(self):
     params = list(self.encoder.named_parameters())
@@ -88,9 +110,12 @@ class HateModule(LightningModule):
     for k, v in no_grad_params:
       print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
 
-  def save(self, dest):
-    if dest is not None:
-      self.encoder.save_all_adapters(dest)
+  def save(self):
+    if self.output_path is None:
+      print("not saving, no output_path specified")
+    else:
+      print(f"saving to {self.output_path}")
+      self.encoder.save_all_adapters(self.output_path)
 
   def forward_base(self, batch):
     return self.encoder(
@@ -113,7 +138,7 @@ class HateModule(LightningModule):
 
   def loss_weights(self, sizes):
     loss_counts = torch.Tensor(np.concatenate([
-      np.full(task.loss_dim, sizes[name])
+      np.full(task.mask_sum, sizes[name])
       for name, task in self.tasks.items()
     ], axis=0)).to(self.encoder.device)
     return loss_counts / loss_counts.mean()
@@ -187,6 +212,29 @@ quant_store(fbuilds(
   bnb_4bit_use_double_quant=True,
   bnb_4bit_compute_dtype="bfloat16",
 ), name="nf4-double")
+quant_store(fbuilds(
+  BitsAndBytesConfig,
+  load_in_4bit=True,
+  bnb_4bit_quant_type="nf4",
+  bnb_4bit_use_double_quant=False,
+  bnb_4bit_compute_dtype="bfloat16",
+), name="nf4-single")
+quant_store(fbuilds(
+  BitsAndBytesConfig,
+  load_in_8bit=True,
+  bnb_4bit_compute_dtype="bfloat16",
+), name="8bit")
+quant_store(fbuilds(
+  QuantoConfig,
+  weights="int8",
+), name="quanto8")
+quant_store(fbuilds(
+  QuantoConfig,
+  weights="int4",
+), name="quanto4")
+
+def ret_none(): return None
+quant_store(fbuilds(ret_none), name="none")
 
 model_store = store(group="model")
 model_store(fbuilds(
@@ -197,13 +245,30 @@ model_store(fbuilds(
   low_cpu_mem_usage=True,
   quantization_config="${quantization}",
 ), name="electra-small")
+model_store(fbuilds(
+  AutoModel.from_pretrained,
+  pretrained_model_name_or_path="google/electra-base-discriminator",
+  device_map="auto",
+  torch_dtype="bfloat16",
+  low_cpu_mem_usage=True,
+  quantization_config="${quantization}",
+), name="electra-base")
 
 optimization_store = store(group="optimization")
-optimization_store(fbuilds(
-  HateOptimization,
-  learning_rate=1e-4,
-  warmup=4,
-), name="default")
+levels = {
+  "slow": 1e-4,
+  "medium": 2.5e-4,
+  "fast": 5e-4,
+  "faster": 1e-3,
+  "fastest": 2e-3,
+}
+for name, learning_rate in levels.items():
+  optimization_store(fbuilds(
+    HateOptimization,
+    learning_rate=learning_rate,
+    head_coef=3e0,
+    warmup=4,
+  ), name=name)
 
 HateModuleCfg = fbuilds(
   HateModule,
@@ -213,4 +278,5 @@ HateModuleCfg = fbuilds(
   heads="${heads}",
   tasks="${tasks}",
   mtl_loss="${mtl_loss}",
+  output_path=None,
 )

@@ -14,7 +14,7 @@ TrainCfg = make_config(
   hydra_defaults=[
     "_self_",
     # misc
-    {"tasks": ["label"]},
+    {"tasks": ["none"]},
     # trainer
     {"callbacks": "default"},
     {"logger": "mlflow"},
@@ -22,9 +22,9 @@ TrainCfg = make_config(
     {"method": "lora8"},
     {"model": "electra-small"},
     {"quantization": "nf4-double"},
-    {"optimization": "default"},
+    {"optimization": "medium"},
     {"mtl_loss": "rw"},
-    {"heads": "default"},
+    {"heads": "medium"},
   ],
   # misc
   tasks=None,
@@ -44,12 +44,18 @@ TrainCfg = make_config(
   datamodule=HateDatamoduleCfg,
 )
 
-def train(module: HateModule, datamodule: HateDatamodule, trainer: Trainer):
+def train(
+    module: HateModule,
+    datamodule: HateDatamodule,
+    trainer: Trainer,
+):
   torch.cuda.empty_cache()
   torch.set_float32_matmul_precision("medium")
 
+  module.vis_params()
   trainer.fit(module, datamodule=datamodule)
   trainer.test(module, datamodule=datamodule)
+  module.save()
 
   # module = torch.compile(module, dynamic=False)
 

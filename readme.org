@@ -1,8 +1,17 @@
-* config
+ config
 
 active tasks + datasets --> dataset/dataloader
 
 * notes
+
+- targets perform much much better in 8b997 for some reason, but only with
+  adapterplus???
+- in 8b997 lora not working at all???
+- checkout after 8b997 but with adapterplus?
+- compare masked-gnu-865 to exultant-skink-962
+- not head shape
+- significant difference when merging partitioned targets
+  (0.52 vs 0.43 macro f1)
 
 ** limitations
 - AutoAdapterModel cannot do quantized LoRA
@@ -43,6 +52,7 @@ active tasks + datasets --> dataset/dataloader
 * todo
 
 ** ideas
+- TASKS SHOULD MOSTLY JUST BE DATASET + NAME, PUT REST IN HEAD?
 - restructure like lightning-hydra-zen-template
 - standardize TaskSet vs Heads (set or plural)
 - add PreTrainedModel to custom types?
@@ -53,7 +63,14 @@ active tasks + datasets --> dataset/dataloader
 - just one paths/info config instead of stats + datasetinfo
 
 ** short-term
+- saving + loading also for full?
+- allow for multiple adapters to be used at same time?
+- improve modeling/methods.py:adjust_dtypes (classvar for each method?)
 - partition targets with different models and merge?
+- smaller partitions?
+- re-add target-specific metrics
+- target-specific loss currently just index of mask, not corresponding
+  to actual targets
 - eval during validation / test?
 - actually save adapters
 - re-add VAT + gradnorm, check if worth

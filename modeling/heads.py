@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from abc import ABC, abstractmethod
 
 import json
+import numpy as np
 import torch as pt
 from torch import nn
 from transformers import PreTrainedModel
@@ -35,6 +36,8 @@ class HateHead(ABC, nn.Module):
     shape: List[int],
     hidden_size: int,
     output_dim: int,
+    mask,
+    shrink_output: bool,
     stats: Stats,
   ):
     ABC.__init__(self)
@@ -44,6 +47,8 @@ class HateHead(ABC, nn.Module):
     self.shape = shape
     self.hidden_size = hidden_size
     self.output_dim = output_dim
+    self.mask = mask
+    self.shrink_output = shrink_output
     self.stats = stats
 
     self.loss = self.make_loss()
@@ -67,9 +72,10 @@ class HateHead(ABC, nn.Module):
       ]
       prev_dim = dim
 
+    output_dim = int(np.sum(self.mask)) if self.shrink_output else self.output_dim
     args += [
       nn.Dropout(self.dropout),
-      nn.Linear(prev_dim, self.output_dim)
+      nn.Linear(prev_dim, output_dim),
     ]
     return nn.Sequential(*args)
 
@@ -118,26 +124,32 @@ class RationaleHead(HateHead):
       "masks": batch["mask"] & (batch["label"][:, 1].gt(0)[:, None]),
     }
 
+# MASKABLE
 class TargetHead(HateHead):
   name = "target"
   loss_args = ["logits", "trues"]
   metrics_args = ["preds", "hards"]
   
   def make_loss(self):
-    return MyBCELoss(freq=self.stats.target_freqs, reduce_dim=0)
+    freq = np.array(self.stats.target_freqs)[self.mask]
+    return MyBCELoss(freq=freq, reduce_dim=0)
 
   def make_metrics(self):
-    return MetricCollection({"target_f1": clf.MultilabelF1Score(
-      num_labels=self.output_dim, average="micro"
-    )})
+    return MetricCollection({
+      "target_macro_f1": clf.MultilabelF1Score(
+        num_labels=int(np.sum(self.mask)), average="macro"
+      ), "target_micro_f1": clf.MultilabelF1Score(
+        num_labels=int(np.sum(self.mask)), average="micro"
+      )})
 
   def forward(self, hidden, batch):
     logits = self.head(hidden[:, 0, :])
+    trues = batch["target"][:, self.mask]
     return {
       "logits": logits,
-      "trues": batch["target"],
+      "trues": trues,
       "preds": pt.gt(logits, 0),
-      "hards": pt.gt(batch["target"], 0.5),
+      "hards": pt.gt(trues, 0.5),
     }
 
 class LabelHead(HateHead):
@@ -200,10 +212,12 @@ class HateHeads(nn.Module):
         raise ValueError(f"invalid task name: {name}")
 
       mapping[name] = constructor(
-        dropout = dropout,
-        shape = shape,
-        hidden_size = model.config.hidden_size,
-        output_dim = task.output_dim,
+        dropout=dropout,
+        shape=shape,
+        hidden_size=model.config.hidden_size,
+        output_dim=task.output_dim,
+        mask=task.mask,
+        shrink_output=task.shrink_output,
         stats = stats,
       )
     self.mapping = nn.ModuleDict(mapping)
@@ -214,11 +228,17 @@ class HateHeads(nn.Module):
 StatsCfg = fbuilds(Stats.from_json, path="data/stats.json")
 
 heads_store = store(group="heads")
-heads_store(fbuilds(
-  HateHeads,
-  dropout=0.2,
-  shape=[128, 128],
-  model="${model}",
-  stats=StatsCfg, 
-  tasks="${tasks}",
-), name="default")
+shapes = {
+  "small": [64, 64],
+  "medium": [128, 128],
+  "large": [256, 128, 128],
+}
+for name, shape in shapes.items():
+  heads_store(fbuilds(
+    HateHeads,
+    dropout=0.2,
+    shape=shape,
+    model="${model}",
+    stats=StatsCfg, 
+    tasks="${tasks}",
+  ), name=name)
