@@ -266,8 +266,8 @@ for name, learning_rate in levels.items():
   optimization_store(fbuilds(
     HateOptimization,
     learning_rate=learning_rate,
-    head_coef=3e0,
-    warmup=4,
+    head_coef=1e0,
+    warmup=0,
   ), name=name)
 
 HateModuleCfg = fbuilds(
