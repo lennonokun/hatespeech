@@ -1,7 +1,8 @@
 from hydra_zen import make_config, store
 from .utils import remove_types
 
-SimpleTargetExperiment = make_config(
+experiment_store = store(group="experiment", package="_global_", to_config=remove_types)
+experiment_store(make_config(
   hydra_defaults=[
     {"override /tasks": ["target"]},
     {"override /quantization": "none"},
@@ -10,9 +11,6 @@ SimpleTargetExperiment = make_config(
     "_self_",
   ],
   datamodule=dict(
-    batch_size=150,
+    batch_size=200,
   )
-)
-
-experiment_store = store(group="experiment", package="_global_", to_config=remove_types)
-experiment_store(SimpleTargetExperiment, name="simple_target")
+), name="simple_target")

@@ -5,4 +5,5 @@ from .tasks import Task, TaskSet
 from .heads import HateHeads
 from .mtl_loss import MTLLoss
 from .trainer import TrainerCfg
-from .experiments import SimpleTargetExperiment # JUST EASIER IMPORT TODO
+from .experiments import * # JUST EASIER IMPORT TODO
+from .debug import HateDebug, HateDebugCfg

@@ -42,17 +42,21 @@ TrainCfg = make_config(
   heads=None,
   # datamodule
   datamodule=HateDatamoduleCfg,
+  # debug
+  debug=HateDebugCfg,
 )
 
 def train(
     module: HateModule,
     datamodule: HateDatamodule,
+    debug: HateDebug,
     trainer: Trainer,
 ):
   torch.cuda.empty_cache()
   torch.set_float32_matmul_precision("medium")
 
-  module.vis_params()
+  if debug.vis_params:
+    module.vis_params()
   trainer.fit(module, datamodule=datamodule)
   trainer.test(module, datamodule=datamodule)
   module.save()
