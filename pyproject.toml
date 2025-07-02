@@ -18,6 +18,7 @@ dependencies = [
 	"peft>=0.15.2",
 	"pyjson5>=1.6.8",
 	"pyspark>=3.5.5",
+	"pytorch-optimizer>=3.6.0",
 	"torch>=2.5.1",
 	"torchinfo>=1.8.0",
 	"torchmetrics>=1.6.1",
