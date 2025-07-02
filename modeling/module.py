@@ -1,11 +1,11 @@
-from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from typing import *
 from pydantic import BaseModel
-from hydra_zen import just, store
+from hydra_zen import store
 
 import numpy as np
 import torch
 
-from bitsandbytes.optim import *
+from pytorch_optimizer import create_optimizer
 from torch.optim.lr_scheduler import *
 from transformers import ElectraModel, BitsAndBytesConfig, QuantoConfig, AutoModel
 
@@ -15,67 +15,22 @@ from .methods import AdapterMethod
 from .heads import HateHeads
 from .mtl_loss import MTLLoss
 from .tasks import TaskSet
-from .custom import MultiLR
 from .utils import *
 
 class HateOptimization(BaseModel):
+  name: str
   learning_rate: float
-  head_coef: float
-  warmup: int
+  weight_decay: float
+  use_lookahead: bool
 
-  def build_head_scheduler(self, optimizer):
-    return CosineAnnealingLR(
-      optimizer,
-      T_max=1,
-      eta_min=0.01*self.head_coef*self.learning_rate,
+  def build(self, model):
+    return create_optimizer(
+      model,
+      self.name,
+      lr=self.learning_rate,
+      weight_decay=self.weight_decay,
+      use_lookahead=self.use_lookahead
     )
-
-  def build_encoder_scheduler(self, optimizer):
-    return SequentialLR(
-      optimizer,
-      schedulers=[
-        LinearLR(
-          optimizer,
-          start_factor=0.01,
-          end_factor=1.0,
-          total_iters=self.warmup,
-        ), CosineAnnealingLR(
-          optimizer,
-          T_max=1,
-          eta_min=0.01*self.learning_rate,
-        )
-      ],
-      milestones=[self.warmup],
-    )
-
-  def build(self, head_params, encoder_params):
-    optimizer = PagedAdamW32bit(params=list(head_params)+list(encoder_params), lr=self.learning_rate)
-    # scheduler = SequentialLR(
-    #   optimizer,
-    #   schedulers=[
-    #     LinearLR(
-    #       optimizer,
-    #       start_factor=0.01,
-    #       end_factor=1.0,
-    #       total_iters=self.warmup,
-    #     ), CosineAnnealingLR(
-    #       optimizer,
-    #       T_max=1,
-    #       eta_min=0.01*self.learning_rate,
-    #     )
-    #   ],
-    #   milestones=[self.warmup],
-    # )
-    return optimizer
-
-    # optimizer = PagedAdamW32bit([
-    #   {"params": head_params, "lr": self.head_coef*self.learning_rate},
-    #   {"params": encoder_params, "lr": self.learning_rate}
-    # ])
-
-    # scheduler = MultiLR(optimizer, [self.build_head_scheduler, self.build_encoder_scheduler])
-    # scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
-    # return [optimizer], [scheduler_dict]
 
 class HateModule(LightningModule):
   def __init__(
@@ -144,9 +99,7 @@ class HateModule(LightningModule):
     return loss_counts / loss_counts.mean()
 
   def configure_optimizers(self): # pyright: ignore
-    head_params = self.heads.parameters()
-    encoder_params = [p for p in self.encoder.parameters() if p.requires_grad]
-    return self.optimization.build(head_params, encoder_params)
+    return self.optimization.build(self)
     
   def split_step(self, batches, split):
     if any(x["size"] == 0 for x in batches.values()):
@@ -265,9 +218,10 @@ levels = {
 for name, learning_rate in levels.items():
   optimization_store(fbuilds(
     HateOptimization,
+    name="adamw",
     learning_rate=learning_rate,
-    head_coef=1e0,
-    warmup=0,
+    weight_decay=1e-2,
+    use_lookahead=False,
   ), name=name)
 
 HateModuleCfg = fbuilds(
