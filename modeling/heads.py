@@ -229,9 +229,11 @@ StatsCfg = fbuilds(Stats.from_json, path="data/stats.json")
 
 heads_store = store(group="heads")
 shapes = {
-  "small": [64, 64],
+  "xsmall": [64, 64],
+  "small": [64, 64, 64],
   "medium": [128, 128],
-  "large": [256, 128, 128],
+  "large": [128, 128, 128],
+  "xlarge": [256, 128, 128],
 }
 for name, shape in shapes.items():
   heads_store(fbuilds(
