@@ -7,7 +7,7 @@ experiment_store(make_config(
     {"override /tasks": ["target"]},
     {"override /quantization": "none"},
     {"override /optimization": "fast"},
-    {"override /method": "lora16"},
+    {"override /method": "ah_lora16"},
     "_self_",
   ],
   datamodule=dict(

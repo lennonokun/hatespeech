@@ -7,7 +7,6 @@ requires-python = ">=3.10"
 dependencies = [
 	"accelerate>=1.6.0",
 	"adapters>=1.1.1",
-	# "adapters@git+https://github.com/adapter-hub/adapters",
 	"bitsandbytes>=0.45.3",
 	"hydra-zen>=0.14.0",
 	"lightning[extra]>=2.5.0.post0",
@@ -16,6 +15,7 @@ dependencies = [
 	"numpy<2.0",
 	"optimum-quanto>=0.2.7",
 	"pandas>=2.2.3",
+	"peft>=0.15.2",
 	"pyjson5>=1.6.8",
 	"pyspark>=3.5.5",
 	"torch>=2.5.1",

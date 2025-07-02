@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import torch as pt
 import adapters as ad
 from adapters import composition as ac
+import peft as pe
 
 from transformers import ElectraModel
 from adapters.models.bert.mixin_bert import BertModelAdaptersMixin
@@ -14,8 +15,6 @@ from .utils import *
 
 class AdapterModel(BertModelAdaptersMixin, ElectraModel): # pyright: ignore
   ...
-
-# TODO fix
 
 class AdapterMethod(ABC):
   @abstractmethod
@@ -42,6 +41,21 @@ class AdapterMethod(ABC):
 class NoAdapterMethod(AdapterMethod):
   def __init__(self):
     super().__init__()
+
+  def _apply(self, model):
+    pass
+
+class PeftAdapterMethod(AdapterMethod):
+  def __init__(self, adapter: pe.PeftConfig):
+    super().__init__()
+    self.adapter = adapter
+
+  # TODO not best practice
+  def apply(self, model):
+    model = pe.get_peft_model(model, self.adapter)
+    model.train()
+    self.adjust_dtypes(model)
+    return model
 
   def _apply(self, model):
     pass
@@ -88,6 +102,19 @@ method_store = store(group="method", to_config=remove_types)
 method_store(builds(NoAdapterMethod), name="full")
 for r in [8, 16, 24, 32]:
   method_store(builds(
+    PeftAdapterMethod,
+    adapter=builds(
+      pe.LoraConfig,
+      task_type=pe.TaskType.FEATURE_EXTRACTION,
+      inference_mode=False,
+      r=r,
+      lora_alpha=r,
+      lora_dropout=0.1,
+      target_modules=["query", "key"],
+      use_rslora=True,
+    )
+  ), name=f"pe_lora{r}")
+  method_store(builds(
     SingleAdapterMethod,
     adapter=builds(
       ad.LoRAConfig,
@@ -96,13 +123,13 @@ for r in [8, 16, 24, 32]:
       dropout=0.1,
       dtype="bfloat16",
     )
-  ), name=f"lora{r}")
+  ), name=f"ah_lora{r}")
   method_store(builds(
     MergeAdapterMethod,
     source_base=MISSING,
     sources=MISSING,
     svd_rank=r,
-  ), name=f"merge{r}")
+  ), name=f"ah_merge{r}")
 for f in [64, 32, 16]:
   method_store(builds(
     SingleAdapterMethod,
@@ -110,94 +137,9 @@ for f in [64, 32, 16]:
       ad.AdapterPlusConfig,
       reduction_factor=f
     )
-  ), name=f"aplus{f}")
+  ), name=f"ah_aplus{f}")
 method_store(builds(
   FuseAdapterMethod,
   source_base=MISSING,
   sources=MISSING,
-), name="fuse")
-
-# class FullModel(BaseModel):
-#   def __init__(self, config):
-#     model_config = AutoConfig.from_pretrained(config["model"])
-#     model_config.hidden_dropout_prob = 0.3
-#     model_config.attentions_prob_dropout_prob = 0.3
-#     super().__init__(config, model_config)
-
-# class ParallelModel(BaseModel):
-#   def __init__(self, config):
-#     super().__init__(config)
-
-#     for source in config["merge_sources"]:
-#       self.model.load_adapter(f"{config['merge_base']}/{source}/adapter", load_as=source, with_head=False)
-
-#     composition = ac.Parallel(*config["merge_sources"])
-#     self.model.set_active_adapters(composition)
-#     if config["parallel_train"] == "head":
-#       for param in self.model.parameters():
-#         param.requires_grad = False
-#     elif config["parallel_train"] == "full":
-#       self.model.train_adapter(composition)
-      
-#     self.adjust_dtypes()
-
-#   def forward_base(self, batch):
-#     hidden = self.model(
-#       input_ids=batch["tokens"],
-#       attention_mask=batch["mask"].bfloat16()
-#     ).last_hidden_state.float()
-#     chunks = []
-#     for i in range(len(self.config["merge_sources"])):
-#       width = self.config["batch_size"]
-#       chunks.append(hidden[width*i: width*(i+1)])
-#     return torch.cat(chunks, dim=2)
-
-# class MTLLoraModel(BaseModel):
-#   def __init__(self, config):
-#     super().__init__(config)
-
-#     adapter_config = MTLLoRAConfig(
-#       r=config["adapter_r"],
-#       dropout=config["adapter_dropout"],
-#       alpha=config["adapter_alpha"],
-#       dtype="bfloat16",
-#     )
-#     for task in config["melt_tasks"]:
-#       self.model.add_adapter(task, adapter_config)
-#     self.model.share_parameters(adapter_names=config["melt_tasks"])
-#     self.model.set_active_adapters(ac.MultiTask(*config["melt_tasks"]))
-#     self.model.train_adapter(ac.MultiTask(*config["melt_tasks"]))
-#     self.adjust_dtypes()
-#     self.vis_params()
-  
-#   def forward_base(self, batch):
-#     return self.model(
-#       batch["tokens"],
-#       attention_mask=batch["mask"].float(),
-#       task_ids=torch.full((batch["size"],), batch["i"]),
-#     ).last_hidden_state.float()
-    
-#   def forward(self, batches, split):
-#     metricss, losses, sizes = {}, {}, {}
-#     for i, (task_name, batch) in enumerate(batches.items()):
-#       hidden = self.forward_base(batch | {"i": i})
-#       metricss[task_name], losses[task_name] = self.tasks[task_name].compute(hidden, batch, split)
-#       sizes[task_name] = batch["size"]
-
-#     return metricss, losses, sizes
-
-# _model_constructors = {
-#   "full": FullModel,
-#   "lora": LoraModel,
-#   "bn": BottleneckModel,
-#   "merge": MergeModel,
-#   "fusion": FusionModel,
-#   "parallel": ParallelModel,
-#   "mtllora": MTLLoraModel,
-# }
-# def construct_module(cfg):
-#   method = cfg.module.method.name
-#   if method not in _model_constructors:
-#     raise ValueError(f"invalid {method=}")
-#   constructor = _model_constructors[method]
-#   return constructor(cfg)
+), name="ah_fuse")
