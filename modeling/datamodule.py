@@ -194,7 +194,7 @@ class HateDatamodule(LightningDataModule):
       self.datasets[split] = self._select_data(split)
 
   def _get_dataloader(self, split: str):
-    if split == "train":
+    if len(self.tasks.datasets()) > 1 and split == "train":
       random_sampler = WeightedRandomSampler(
         weights=self.datasets[split].weights,
         num_samples=self.datasets[split].min_length,
