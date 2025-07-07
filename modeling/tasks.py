@@ -3,6 +3,7 @@ import numpy.typing as npt
 from pydantic import BaseModel, model_validator
 
 import numpy as np
+import math
 from hydra_zen import store
 from .utils import *
 
@@ -14,13 +15,22 @@ class Task(BaseModel):
   loss_dim: int
   shrink_output: bool
   mask: Any = None
+  mask_numerator: int | None = None
+  mask_denominator: int | None = None
 
   @model_validator(mode="after")
   def val(self):
     # TODO this would mean extraneous head output
     if self.mask is None:
-      self.mask = np.ones(self.loss_dim, dtype=np.bool_)
-    self.mask = np.array(self.mask, dtype=np.bool_)
+      if self.mask_numerator is not None and self.mask_denominator is not None:
+        self.mask = np.zeros(self.loss_dim, dtype=np.bool_)
+        lower = math.ceil((self.mask_numerator-1) / self.mask_denominator * self.loss_dim)
+        upper = math.ceil(self.mask_numerator / self.mask_denominator * self.loss_dim)
+        self.mask[lower: upper] = True
+      else:
+        self.mask = np.ones(self.loss_dim, dtype=np.bool_)
+    else:
+      self.mask = np.array(self.mask, dtype=np.bool_)
     return self
 
   @property
