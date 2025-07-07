@@ -14,3 +14,15 @@ experiment_store(make_config(
     batch_size=200,
   )
 ), name="simple_target")
+experiment_store(make_config(
+  hydra_defaults=[
+    {"override /tasks": ["label"]},
+    {"override /quantization": "none"},
+    {"override /optimization": "fast"},
+    {"override /method": "ah_lora16"},
+    "_self_",
+  ],
+  datamodule=dict(
+    batch_size=200,
+  )
+), name="simple_label")
