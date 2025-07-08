@@ -19,7 +19,7 @@ TrainCfg = make_config(
     {"callbacks": "default"},
     {"logger": "mlflow"},
     # module
-    {"method": "lora8"},
+    {"method": "ah_lora16"},
     {"model": "electra-small"},
     {"quantization": "nf4-double"},
     {"optimization": "medium"},
