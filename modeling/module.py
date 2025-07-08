@@ -76,17 +76,17 @@ class HateModule(LightningModule):
     return self.encoder(
       input_ids=batch["tokens"],
       attention_mask=batch["mask"].bfloat16()
-    ).last_hidden_state.float()
+    )
 
   def forward(self, batches, split):
     metricss, losses, sizes = {}, {}, {}
     for set_name in self.tasks.datasets():
       batch = batches[set_name]
-      hidden = self.forward_base(batch)
+      output = self.forward_base(batch)
 
       for task_name, task in self.tasks.items():
         if task.dataset == set_name:
-          metricss[task_name], losses[task_name] = self.heads[task_name].compute(hidden, batch, split)
+          metricss[task_name], losses[task_name] = self.heads[task_name].compute(output, batch, split)
           sizes[task_name] = batch["size"]
 
     return metricss, losses, sizes
@@ -100,7 +100,7 @@ class HateModule(LightningModule):
 
   def configure_optimizers(self): # pyright: ignore
     return self.optimization.build(self)
-    
+  
   def split_step(self, batches, split):
     if any(x["size"] == 0 for x in batches.values()):
       return None

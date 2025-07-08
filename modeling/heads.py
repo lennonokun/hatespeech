@@ -12,7 +12,7 @@ from torchmetrics import classification as clf, regression as reg
 from hydra_zen import store
 
 from .utils import *
-from .custom import MaskedBinaryF1, MyBCELoss
+from .custom import MaskedBinaryF1, MyBCELoss, FocalLoss
 from .tasks import TaskSet
 
 class Stats(BaseModel):
@@ -25,11 +25,10 @@ class Stats(BaseModel):
     return cls(**json.load(open(path, "r")))
 
 class HateHead(ABC, nn.Module):
-  # implemented by subclass
   name: ClassVar[str]
   loss_args: ClassVar[List[str]]
   metrics_args: ClassVar[List[str]]
-  
+
   def __init__(
     self,
     dropout: float,
@@ -40,6 +39,7 @@ class HateHead(ABC, nn.Module):
     shrink_output: bool,
     stats: Stats,
   ):
+    self.stats = stats
     ABC.__init__(self)
     nn.Module.__init__(self)
 
@@ -49,17 +49,16 @@ class HateHead(ABC, nn.Module):
     self.output_dim = output_dim
     self.mask = mask
     self.shrink_output = shrink_output
-    self.stats = stats
 
+    self.model = self.make_model()
     self.loss = self.make_loss()
     metrics = self.make_metrics()
     self.metrics = {
       split: metrics.clone(prefix=f"{split}_").cuda()
       for split in ["train", "valid", "test"]
     }
-    self.head = self.make_head()
 
-  def make_head(self) -> nn.Module:
+  def make_model(self) -> nn.Module:
     args = []
     prev_dim = self.hidden_size
 
@@ -88,7 +87,7 @@ class HateHead(ABC, nn.Module):
     raise NotImplementedError
 
   @abstractmethod
-  def forward(self, hidden, batch):
+  def forward(self, output, batch):
     raise NotImplementedError
 
   def compute_metrics(self, results, split):
@@ -97,8 +96,8 @@ class HateHead(ABC, nn.Module):
   def compute_loss(self, results):
     return self.loss(*[results[arg] for arg in self.loss_args])
 
-  def compute(self, hidden, batch, split):
-    results = self.forward(hidden, batch)
+  def compute(self, output, batch, split):
+    results = self.forward(output, batch)
     metrics = self.compute_metrics(results, split)
     loss = self.compute_loss(results)
     return metrics, loss
@@ -109,19 +108,21 @@ class RationaleHead(HateHead):
   metrics_args = ["preds", "hards", "masks"]
   
   def make_loss(self):
-    return MyBCELoss(freq=self.stats.rationale_freq)
+    return FocalLoss(alpha=0.8, gamma=2.0)
 
   def make_metrics(self):
     return MetricCollection({"rationale_f1": MaskedBinaryF1()})
     
-  def forward(self, hidden, batch):
-    logits = self.head(hidden).squeeze(-1)
+  def forward(self, output, batch):
+    hidden = output.last_hidden_state.float()
+    logits = self.model(hidden).squeeze(-1)
+    label_mask = batch["label"][:, [0,1]].gt(0).any(dim=1)[:, None]
     return {
       "logits": logits,
       "trues": batch["rationale"],
       "preds": pt.gt(logits, 0),
       "hards": pt.gt(batch["rationale"], 0.5),
-      "masks": batch["mask"] & (batch["label"][:, 1].gt(0)[:, None]),
+      "masks": batch["mask"] & label_mask,
     }
 
 # MASKABLE
@@ -140,10 +141,12 @@ class TargetHead(HateHead):
         num_labels=int(np.sum(self.mask)), average="macro"
       ), "target_micro_f1": clf.MultilabelF1Score(
         num_labels=int(np.sum(self.mask)), average="micro"
-      )})
+      )
+    })
 
-  def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
+  def forward(self, output, batch):
+    hidden = output.last_hidden_state.float()
+    logits = self.model(hidden[:, 0, :])
     trues = batch["target"][:, self.mask]
     return {
       "logits": logits,
@@ -165,8 +168,9 @@ class LabelHead(HateHead):
       num_classes=self.output_dim, average="macro"
     )})
 
-  def forward(self, hidden, batch):
-    logits = self.head(hidden[:, 0, :])
+  def forward(self, output, batch):
+    hidden = output.last_hidden_state.float()
+    logits = self.model(hidden[:, 0, :])
     return {
       "logits": logits,
       "trues": batch["label"],
@@ -185,9 +189,10 @@ class ScoreHead(HateHead):
   def make_metrics(self):
     return MetricCollection({"score_mse": reg.MeanSquaredError()})
   
-  def forward(self, hidden, batch):
+  def forward(self, output, batch):
+    hidden = output.last_hidden_state.float()
     return {
-      "preds": self.head(hidden[:, 0, :]).squeeze(-1),
+      "preds": self.model(hidden[:, 0, :]).squeeze(-1),
       "trues": batch["score"],
     }
 
