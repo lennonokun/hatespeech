@@ -20,5 +20,6 @@ uv.lock
 lightning_logs/
 .direnv/
 .envrc
-data/
+data/explain/
+data/measuring/
 tb_logs/

@@ -1,0 +1,8 @@
+{
+	"target": [
+		"African", "Arab", "Asian", "Caucasian", "Hispanic",
+		"Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
+	], "label": [
+		"hatespeech", "offensive", "normal"
+	]
+}
