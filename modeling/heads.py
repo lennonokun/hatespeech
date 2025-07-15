@@ -200,23 +200,24 @@ class HateHeads(nn.Module):
   _constructors_list = [TargetHead, RationaleHead, LabelHead, ScoreHead]
   _constructors_dict = {x.name: x for x in _constructors_list}
 
-  # TODO TAKE ENCODER
   def __init__(
     self,
     dropout: float,
     shape: List[int],
     tasks: TaskSet,
     model: PreTrainedModel,
-    stats: Stats
+    stats: Stats,
+    path: str | None,
+    load: bool,
   ):
     super().__init__()
-    mapping = {}
+    self.mapping = nn.ModuleDict()
     for name, task in tasks.items():
       constructor = self._constructors_dict.get(name)
       if task is None or constructor is None:
         raise ValueError(f"invalid task name: {name}")
 
-      mapping[name] = constructor(
+      self.mapping[name] = constructor(
         dropout=dropout,
         shape=shape,
         hidden_size=model.config.hidden_size,
@@ -225,10 +226,18 @@ class HateHeads(nn.Module):
         shrink_output=task.shrink_output,
         stats = stats,
       )
-    self.mapping = nn.ModuleDict(mapping)
+
+    if load and path is not None:
+      self.mapping.load_state_dict(pt.load(path))
 
   def __getitem__(self, name: str) -> HateHead:
     return cast(HateHead, self.mapping[name])
+
+  def save(self, path: str):
+    pt.save(self.mapping.state_dict(), path)
+
+  def load(self, path: str):
+    self.load_state_dict(pt.load(path, weights_only=True))
 
 StatsCfg = fbuilds(Stats.from_json, path="data/stats.json")
 
@@ -248,4 +257,6 @@ for name, shape in shapes.items():
     model="${model}",
     stats=StatsCfg, 
     tasks="${tasks}",
+    path="${load_path}/heads.pt",
+    load=False,
   ), name=name)

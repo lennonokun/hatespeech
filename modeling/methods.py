@@ -17,6 +17,9 @@ class AdapterModel(BertModelAdaptersMixin, ElectraModel): # pyright: ignore
   ...
 
 class AdapterMethod(ABC):
+  def __init__(self):
+    super().__init__()
+  
   @abstractmethod
   def _apply(self, model: AdapterModel) -> None: ...
       
@@ -28,15 +31,24 @@ class AdapterMethod(ABC):
     return model
 
   @staticmethod
+  def adjust_dtypes(model): 
+    for name, param in model.named_parameters():
+      if "adapter" in name or "lora" in name or "compacter" in name:
+        param.data = param.data.to(pt.bfloat16)
+
+  @staticmethod
   def load_sources(model: AdapterModel, source_base: str, sources: List[str]) -> None:
     for source in sources:
       model.load_adapter(f"{source_base}/{source}/adapter", load_as=source, with_head=False)
 
-  @staticmethod
-  def adjust_dtypes(model): 
-    for name, param in model.named_parameters():
-      if "adapter" in name or "lora" in name:
-        param.data = param.data.to(pt.bfloat16)
+class LoadAdapterMethod(AdapterMethod):
+  def __init__(self, path):
+    super().__init__()
+    self.path = path
+
+  def _apply(self, model):
+    model.load_adapter(f"{self.path}/adapter", load_as="adapter", with_head=False)
+    model.train_adapter("adapter")
 
 class NoAdapterMethod(AdapterMethod):
   def __init__(self):
@@ -100,6 +112,8 @@ class FuseAdapterMethod(AdapterMethod):
 
 method_store = store(group="method", to_config=remove_types)
 method_store(builds(NoAdapterMethod), name="full")
+method_store(builds(LoadAdapterMethod, path="${load_path}/encoder"), name="load")
+  
 for r in [8, 16, 24, 32]:
   method_store(builds(
     PeftAdapterMethod,
@@ -130,6 +144,20 @@ for r in [8, 16, 24, 32]:
     sources=MISSING,
     svd_rank=r,
   ), name=f"ah_merge{r}")
+
+method_store(builds(
+  SingleAdapterMethod,
+  adapter=builds(
+    ad.CompacterPlusPlusConfig,
+  )
+), name=f"ah_cpp")
+method_store(builds(
+  SingleAdapterMethod,
+  adapter=builds(
+    ad.PrefixTuningConfig,
+  )
+), name=f"ah_prefix")
+  
 for f in [64, 32, 16]:
   method_store(builds(
     SingleAdapterMethod,

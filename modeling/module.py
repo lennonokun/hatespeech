@@ -4,8 +4,9 @@ from hydra_zen import store
 
 import numpy as np
 import torch
+from pathlib import Path
 
-from pytorch_optimizer import create_optimizer
+from pytorch_optimizer import load_optimizer, Lookahead
 from torch.optim.lr_scheduler import *
 from transformers import ElectraModel, BitsAndBytesConfig, QuantoConfig, AutoModel
 
@@ -16,21 +17,65 @@ from .heads import HateHeads
 from .mtl_loss import MTLLoss
 from .tasks import TaskSet
 from .utils import *
+from .custom import MultiLR
 
 class HateOptimization(BaseModel):
   name: str
   learning_rate: float
   weight_decay: float
   use_lookahead: bool
+  warmup: int
 
-  def build(self, model):
-    return create_optimizer(
-      model,
-      self.name,
-      lr=self.learning_rate,
-      weight_decay=self.weight_decay,
-      use_lookahead=self.use_lookahead
+  def build_optimizer(self, model):
+    optimizer_func = load_optimizer(self.name)
+    params = [
+      {"params": model.heads.parameters()},
+      {"params": model.encoder.parameters()},
+    ]
+    optimizer = optimizer_func(
+      params=params,
+      lr=self.learning_rate, # pyright: ignore
+      weight_decay= self.weight_decay, # pyright: ignore
     )
+
+    if self.use_lookahead:
+      optimizer = Lookahead(optimizer)
+
+    return optimizer
+  
+  def build_head_scheduler(self, optimizer):
+    return CosineAnnealingLR(
+      optimizer,
+      T_max=1,
+      eta_min=0.01 * self.learning_rate
+    )
+
+  def build_encoder_scheduler(self, optimizer):
+    return SequentialLR(
+      optimizer,
+      schedulers=[
+        LinearLR(
+          optimizer,
+          start_factor=0.01,
+          end_factor=1.0,
+          total_iters=self.warmup,
+        ), CosineAnnealingLR(
+          optimizer,
+          T_max=1,
+          eta_min=0.01*self.learning_rate,
+        )
+      ],
+      milestones=[self.warmup],
+    )
+  
+  def build(self, model):
+    optimizer = self.build_optimizer(model)
+    scheduler = MultiLR(
+      optimizer,
+      [self.build_head_scheduler, self.build_encoder_scheduler]
+    )
+    scheduler_dict = {"scheduler": scheduler, "interval": "epoch"}
+    return [optimizer], [scheduler_dict]
 
 class HateModule(LightningModule):
   def __init__(
@@ -41,7 +86,7 @@ class HateModule(LightningModule):
     optimization: HateOptimization,
     tasks: TaskSet,
     mtl_loss: MTLLoss,
-    output_path: str | None,
+    save_path: str,
   ):
     super().__init__()
     # Self.save_hyperparameters()
@@ -51,7 +96,7 @@ class HateModule(LightningModule):
     self.optimization = optimization
     self.tasks = tasks
     self.mtl_loss = mtl_loss
-    self.output_path = output_path
+    self.save_path = save_path
 
   def vis_params(self):
     params = list(self.encoder.named_parameters())
@@ -64,13 +109,14 @@ class HateModule(LightningModule):
     print(f"no grad params:")
     for k, v in no_grad_params:
       print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
-
+  
   def save(self):
-    if self.output_path is None:
-      print("not saving, no output_path specified")
+    if self.save_path is None:
+      print("not saving, no save_path specified")
     else:
-      print(f"saving to {self.output_path}")
-      self.encoder.save_all_adapters(self.output_path)
+      print(f"saving to {self.save_path}")
+      self.encoder.save_all_adapters(f"{self.save_path}/encoder")
+      self.heads.save(f"{self.save_path}/heads.pt")
 
   def forward_base(self, batch):
     return self.encoder(
@@ -221,7 +267,8 @@ for name, learning_rate in levels.items():
     name="adamw",
     learning_rate=learning_rate,
     weight_decay=1e-2,
-    use_lookahead=False,
+    use_lookahead=True,
+    warmup=2,
   ), name=name)
 
 HateModuleCfg = fbuilds(
@@ -232,5 +279,5 @@ HateModuleCfg = fbuilds(
   heads="${heads}",
   tasks="${tasks}",
   mtl_loss="${mtl_loss}",
-  output_path=None,
+  save_path="${save_path}",
 )

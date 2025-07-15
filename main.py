@@ -44,40 +44,38 @@ TrainCfg = make_config(
   datamodule=HateDatamoduleCfg,
   # debug
   debug=HateDebugCfg,
+  save_path=None,
+  load_path=None,
+  action="train",
 )
 
-def train(
-    module: HateModule,
-    datamodule: HateDatamodule,
-    debug: HateDebug,
-    trainer: Trainer,
+def main(
+  module: HateModule,
+  datamodule: HateDatamodule,
+  debug: HateDebug,
+  trainer: Trainer,
+  action: str,
 ):
   torch.cuda.empty_cache()
   torch.set_float32_matmul_precision("medium")
 
   if debug.vis_params:
     module.vis_params()
-  trainer.fit(module, datamodule=datamodule)
-  trainer.test(module, datamodule=datamodule)
+
+  if action == "train":
+    trainer.fit(module, datamodule=datamodule)
+    trainer.test(module, datamodule=datamodule)
+  elif action == "test":
+    trainer.test(module, datamodule=datamodule)
+  else:
+    raise ValueError(f"invalid action specified: {action}")
   module.save()
-
-  # module = torch.compile(module, dynamic=False)
-
-  # tuner = Tuner(trainer)
-  # tuner.lr_find(module, datamodule=datamodule, min_lr=1e-6, max_lr=2e-3)
-  # tuner.scale_batch_size(module, datamodule=data, init_val=32, max_trials=3)
- 
-  # torch.cuda.empty_cache()
-  # trainer.fit(module, datamodule=datamodule)
-  # # module.dequantize()
-  # trainer.test(module, datamodule=datamodule)
-  # module.save(args.save_adapters)
 
 if __name__ == "__main__":
   store(HydraConf(job=JobConf(chdir=False)))
   store(TrainCfg, name="config")
   store.add_to_hydra_store(overwrite_ok=True)
-  zen(train).hydra_main(
+  zen(main).hydra_main(
     config_name="config",
     version_base="1.3",
     config_path=None,
