@@ -1,0 +1,30 @@
+{
+  "config": {
+    "alpha": 16,
+    "architecture": "lora",
+    "attn_matrices": [
+      "q",
+      "v"
+    ],
+    "composition_mode": "add",
+    "dropout": 0.05,
+    "dtype": "bfloat16",
+    "init_weights": "lora",
+    "init_weights_seed": null,
+    "intermediate_lora": false,
+    "leave_out": [],
+    "output_lora": false,
+    "r": 16,
+    "selfattn_lora": true,
+    "use_gating": false,
+    "vera_b": null,
+    "vera_d": null
+  },
+  "config_id": "491a0c5bdc4f8e53",
+  "hidden_size": 256,
+  "model_class": "ElectraModel",
+  "model_name": "google/electra-small-discriminator",
+  "model_type": "electra",
+  "name": "adapter",
+  "version": "adapters.1.2.0.dev0"
+}

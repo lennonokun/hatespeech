@@ -1,9 +1,14 @@
 * notes
 - could pre train adapter on much much larger non labeled corpus
   (language adapters)
+- there seems to be evidence that at least merging partitioned targets
+  improves metrics
+- todo try longer encoder warmups, larger models, fusion, multi
+  dataset, other tasks
+- todo parallel, but probably they should not be trainable
 
 ** limitations
-- AutoAdapterModel cannot do quantized LoRA
+- AutoAdapterModel cannot do quantized LoRA TODO check
 - adapters.init(AutoModel) cannot do custom heads
 
 ** quantization
@@ -113,51 +118,65 @@
 
 * results
 
-** initial n=10 norm (fixed) + RW + 20 epochs + r=8 + layers=2
+** small lora16 targets partitioned n=4
 
-| metrics           | results |
-|-------------------+---------|
-| test_label_f1     |   0.610 |
-| test_rationale_f1 |   0.659 |
-| test_score_mse    |   1.936 |
-| test_target_f1    |   0.721 |
+TODO MAKE THESE EXPERIMENTS?
 
-** small
+TRAINING FROM SCRATCH
+#+begin_src sh
+# train partitions
+uv run main.py tasks=[target] tasks.target.mask_numerator=1 tasks.target.mask_denominator=4 \
+	 save_path=adapters/small/lora16/target1
+uv run main.py tasks=[target] tasks.target.mask_numerator=2 tasks.target.mask_denominator=4 \
+	 save_path=adapters/small/lora16/target2
+uv run main.py tasks=[target] tasks.target.mask_numerator=3 tasks.target.mask_denominator=4 \
+	 save_path=adapters/small/lora16/target3
+uv run main.py tasks=[target] tasks.target.mask_numerator=4 tasks.target.mask_denominator=4 \
+	 save_path=adapters/small/lora16/target4
+# train merge
+uv run main.py tasks=[target] method=ah_merge16 optimization.warmup=15 \
+	 method.source_base=adapters/small/lora16 method.sources=[target1,target2,target3,target4] \
+	 save_path=adapters/small/lora16/target_merge 
+# train single
+uv run main.py tasks=[target] save_path=adapters/small/lora16/target_single
+#+end_src
 
-*** bn
+TESTING
+#+begin_src sh
+# test partitions
+uv run main.py tasks=[target] tasks.target.mask_numerator=1 tasks.target.mask_denominator=4 \
+	 method=ah_load heads.load=true action=test load_path=adapters/small/lora16/target1
+uv run main.py tasks=[target] tasks.target.mask_numerator=2 tasks.target.mask_denominator=4 \
+	 method=ah_load heads.load=true action=test load_path=adapters/small/lora16/target2
+uv run main.py tasks=[target] tasks.target.mask_numerator=3 tasks.target.mask_denominator=4 \
+	 method=ah_load heads.load=true action=test load_path=adapters/small/lora16/target3
+uv run main.py tasks=[target] tasks.target.mask_numerator=4 tasks.target.mask_denominator=4 \
+	 method=ah_load heads.load=true action=test load_path=adapters/small/lora16/target4
+# test merge
+uv run main.py tasks=[target] method=ah_load heads.load=true action=test \
+	 load_path=adapters/small/lora16/target_merge
+# train single
+uv run main.py tasks=[target] method=ah_load heads.load=True action=test \
+	 load_path=adapters/small/lora16/target_single
+#+end_src
 
-**** f=64
-| metrics        | Single Task | Single Merge |
-|----------------+-------------+--------------|
-| test_label_f1  |       0.608 |        0.637 |
-| test_score_mse |       1.837 |              |
+RESULTS
+- it seems as if merged model is comparable to multiple subtasks
+  models and better than a singly trained model
+- make sure this isnt a result of too early stopping
 
-*** lora
-
-**** r=16 a=16
-
-| metrics        | Single Task | Single Merge |
-|----------------+-------------+--------------|
-| test_label_f1  |       0.644 |        0.637 |
-| test_score_mse |       1.769 |              |
-
-** base
-
-*** bn
-
-**** f=64
-| metrics        | Single Task | Single Merge |
-|----------------+-------------+--------------|
-| test_label_f1  |       0.664 |        0.647 |
-| test_score_mse |       1.457 |              |
-
-*** lora
-
-**** r=8
-
-| metrics        | Single Task | Single Merge |
-|----------------+-------------+--------------|
-| test_label_f1  |       0.658 |        0.657 |
-| test_score_mse |       1.439 |              |
-| test_target_f1 |       0.641 |              |
-
+| metrics                   | partitioned | single | merged (warmup=15) |
+|---------------------------+-------------+--------+--------------------+
+| test_target_f1_african    |       0.791 |  0.780 |              0.814 |
+| test_target_f1_arab       |       0.620 |  0.494 |              0.521 |
+| test_target_f1_asian      |       0.663 |  0.651 |              0.667 |
+| test_target_f1_caucasian  |       0.363 |  0.322 |              0.395 |
+| test_target_f1_hispanic   |       0.719 |  0.540 |              0.605 |
+| test_target_f1_homosexual |       0.807 |  0.761 |              0.784 |
+| test_target_f1_islam      |       0.717 |  0.673 |              0.694 |
+| test_target_f1_jewish     |       0.880 |  0.877 |              0.880 |
+| test_target_f1_other      |       0.285 |  0.247 |              0.270 |
+| test_target_f1_refugee    |       0.644 |  0.570 |              0.624 |
+| test_target_f1_women      |       0.553 |  0.524 |              0.580 |
+| test_target_macro_f1      |        TODO |  0.585 |              0.621 |
+| test_target_micro_f1      |        TODO |  0.609 |              0.666 |

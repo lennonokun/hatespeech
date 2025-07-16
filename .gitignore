@@ -12,14 +12,11 @@ uv.lock
 
 # Custom
 outputs
-adapters
 mlruns/
 .env
 .python-version
 uv.lock
 lightning_logs/
 .direnv/
-.envrc
 data/explain/
 data/measuring/
-tb_logs/
