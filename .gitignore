@@ -18,5 +18,6 @@ mlruns/
 uv.lock
 lightning_logs/
 .direnv/
+.envrc
 data/explain/
 data/measuring/
