@@ -230,7 +230,7 @@ DatasetInfoCfg = builds(
 )
 HateDatamoduleCfg = builds(
   HateDatamodule,
-  batch_size = 64,
+  batch_size = 200,
   max_length = 128,
   dynamic_length = True,
   info=DatasetInfoCfg,

@@ -1,17 +1,83 @@
 from typing import *
+from copy import deepcopy
 
 import numpy as np
 
-import torch
+import torch as pt
 from torch import nn
 from torch.nn import functional as F
 
-from lightning.pytorch.callbacks.callback import Callback
+# from lightning.pypt.callbacks.callback import Callback
 
 from torchmetrics import Metric
+from lightning import LightningModule
 
+# metric with arguments and matching labels for non-scalar values
+# TODO optional one-time check?
+# TODO inherit instead of compose?
+class ExtendedMetric:
+  def __init__(
+    self,
+    metric: Metric,
+    args: List[str],
+    labels: List[str] | None = None
+  ):
+    self.metric = metric
+    self.args = args
+    self.labels = labels
+
+  def log(self, name: str, module: LightningModule, results: Dict[str, pt.Tensor], **kwargs):
+    values = self.metric(*[results[arg] for arg in self.args])
+    if values.ndim == 0:
+      if self.labels is not None:
+        raise ValueError(f"invalid labels, got {self.labels}, expected None")
+      module.log(name, values, **kwargs)
+    elif values.ndim == 1:
+      if self.labels is None or len(self.labels) != len(values):
+        raise ValueError(f"invalid labels, got {self.labels}, expected length of {len(values)}")
+      for label, value in zip(self.labels, values):
+        module.log(name.format(label), value, **kwargs)
+    else:
+      raise RuntimeError(f"metric can only return values of dimension 0 or 1, not {values.ndim}")
+
+  def clone(self):
+    return ExtendedMetric(
+      self.metric.clone(),
+      deepcopy(self.args),
+      deepcopy(self.labels)
+    )
+
+  def reset(self):
+    self.metric.reset()
+
+  def cuda(self):
+    self.metric = self.metric.cuda()
+    return self
+
+class ExtendedMetricSet:
+  def __init__(self, data: Dict[str, ExtendedMetric]):
+    self.data = data
+
+  def log_all(self, module: LightningModule, results: Dict[str, pt.Tensor], **kwargs):
+    for name, emetric in self.data.items():
+      emetric.log(name, module, results, **kwargs)
+
+  def clone(self, prefix=""):
+    return ExtendedMetricSet(data={
+      f"{prefix}{name}": emetric.clone()
+      for name, emetric in self.data.items()
+    })
+
+  def cuda(self):
+    self.data = {name: emetric.cuda() for name, emetric in self.data.items()}
+    return self
+
+  def reset(self):
+    for emetric in self.data.values():
+      emetric.reset()
+    
 # sourced from https://github.com/kardasbart/MultiLR
-class MultiLR(torch.optim.lr_scheduler._LRScheduler):
+class MultiLR(pt.optim.lr_scheduler._LRScheduler):
   def __init__(self, optimizer, lambda_factories, last_epoch=-1):
     self.schedulers = []
     values = self._get_optimizer_lr(optimizer)
@@ -48,10 +114,10 @@ class MultiLR(torch.optim.lr_scheduler._LRScheduler):
 class MaskedBinaryAccuracy(Metric):
   def __init__(self, dist_sync_on_step=False):
     super().__init__(dist_sync_on_step=dist_sync_on_step)
-    self.add_state("correct", default=torch.tensor(0.), dist_reduce_fx="sum")
-    self.add_state("incorrect", default=torch.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("correct", default=pt.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("incorrect", default=pt.tensor(0.), dist_reduce_fx="sum")
 
-  def update(self, preds: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor):
+  def update(self, preds: pt.Tensor, labels: pt.Tensor, mask: pt.Tensor):
     preds, labels, mask = preds.bool(), labels.bool(), mask.bool()
     self.correct += ((preds == labels) & mask).sum().float()
     self.incorrect += ((preds != labels) & mask).sum().float()
@@ -62,12 +128,12 @@ class MaskedBinaryAccuracy(Metric):
 class MaskedBinaryF1(Metric):
   def __init__(self, dist_sync_on_step=False):
     super().__init__(dist_sync_on_step=dist_sync_on_step)
-    self.add_state("true_positives", default=torch.tensor(0.), dist_reduce_fx="sum")
-    self.add_state("true_negatives", default=torch.tensor(0.), dist_reduce_fx="sum")
-    self.add_state("false_positives", default=torch.tensor(0.), dist_reduce_fx="sum")
-    self.add_state("false_negatives", default=torch.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("true_positives", default=pt.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("true_negatives", default=pt.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("false_positives", default=pt.tensor(0.), dist_reduce_fx="sum")
+    self.add_state("false_negatives", default=pt.tensor(0.), dist_reduce_fx="sum")
 
-  def update(self, preds: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor):
+  def update(self, preds: pt.Tensor, labels: pt.Tensor, mask: pt.Tensor):
     preds, labels, mask = preds.bool(), labels.bool(), mask.bool()
 
     self.true_positives += (preds & labels & mask).sum().float()
@@ -98,7 +164,7 @@ class FocalLoss(nn.Module):
     self.reduce_dim = reduce_dim
 
   def forward(self, logits, labels, mask=None):
-    probs = torch.sigmoid(logits)
+    probs = pt.sigmoid(logits)
     probs_t = probs * labels + (1 - probs) * (1 - labels)
     alpha_t = self.alpha * labels + (1 - self.alpha) * (1 - labels)
     bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
@@ -118,7 +184,7 @@ class MyBCELoss(nn.Module):
       self.pos_weight = None
     else:
       freq = np.atleast_1d(freq)
-      self.pos_weight = torch.Tensor((1 - freq) / (freq + 1e-8)).cuda()
+      self.pos_weight = pt.Tensor((1 - freq) / (freq + 1e-8)).cuda()
 
   def forward(self, logits, labels, mask=None):
     loss = F.binary_cross_entropy_with_logits(

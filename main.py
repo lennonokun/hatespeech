@@ -22,7 +22,7 @@ TrainCfg = make_config(
     {"method": "ah_lora16"},
     {"model": "electra-small"},
     {"quantization": "nf4-double"},
-    {"optimization": "medium"},
+    {"optimization": "fastest"},
     {"mtl_loss": "rw"},
     {"heads": "medium"},
   ],

@@ -1,18 +1,18 @@
 from typing import *
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
+from functools import partial
 
 import json
 import numpy as np
 import torch as pt
 from torch import nn
 from transformers import PreTrainedModel
-from torchmetrics import MetricCollection
 from torchmetrics import classification as clf, regression as reg
 from hydra_zen import store
 
 from .utils import *
-from .custom import MaskedBinaryF1, MyBCELoss, FocalLoss
+from .custom import MaskedBinaryF1, MyBCELoss, FocalLoss, ExtendedMetric, ExtendedMetricSet
 from .tasks import TaskSet
 
 class Stats(BaseModel):
@@ -27,7 +27,6 @@ class Stats(BaseModel):
 class HateHead(ABC, nn.Module):
   name: ClassVar[str]
   loss_args: ClassVar[List[str]]
-  metrics_args: ClassVar[List[str]]
 
   def __init__(
     self,
@@ -78,40 +77,44 @@ class HateHead(ABC, nn.Module):
     ]
     return nn.Sequential(*args)
 
+  def apply_mask_to_labels(self, labels):
+    return [label for mask_bit, label in zip(self.mask, labels) if mask_bit]
+
   @abstractmethod
   def make_loss(self) -> nn.Module:
     raise NotImplementedError
 
   @abstractmethod
-  def make_metrics(self) -> MetricCollection:
+  def make_metrics(self) -> ExtendedMetricSet:
     raise NotImplementedError
 
   @abstractmethod
   def forward(self, output, batch):
     raise NotImplementedError
 
-  def compute_metrics(self, results, split):
-    return self.metrics[split](*[results[arg] for arg in self.metrics_args])
-
   def compute_loss(self, results):
     return self.loss(*[results[arg] for arg in self.loss_args])
 
   def compute(self, output, batch, split):
     results = self.forward(output, batch)
-    metrics = self.compute_metrics(results, split)
     loss = self.compute_loss(results)
-    return metrics, loss
+    log_metrics = partial(self.metrics[split].log_all, results=results)
+    return log_metrics, loss
 
 class RationaleHead(HateHead):
   name = "rationale"
   loss_args = ["logits", "trues", "masks"]
-  metrics_args = ["preds", "hards", "masks"]
   
   def make_loss(self):
     return FocalLoss(alpha=0.8, gamma=2.0)
 
   def make_metrics(self):
-    return MetricCollection({"rationale_f1": MaskedBinaryF1()})
+    return ExtendedMetricSet(data={
+      "rationale_f1": ExtendedMetric(
+        metric=MaskedBinaryF1(),
+        args=["preds", "hards", "masks"],
+      )
+    })
     
   def forward(self, output, batch):
     hidden = output.last_hidden_state.float()
@@ -129,18 +132,30 @@ class RationaleHead(HateHead):
 class TargetHead(HateHead):
   name = "target"
   loss_args = ["logits", "trues"]
-  metrics_args = ["preds", "hards"]
+  labels = [
+    "african", "arab", "asian", "caucasian", "hispanic",
+    "homosexual", "islam", "jewish", "other", "refugee", "women"
+  ]
   
   def make_loss(self):
     freq = np.array(self.stats.target_freqs)[self.mask]
     return MyBCELoss(freq=freq, reduce_dim=0)
 
   def make_metrics(self):
-    return MetricCollection({
-      "target_macro_f1": clf.MultilabelF1Score(
-        num_labels=int(np.sum(self.mask)), average="macro"
-      ), "target_micro_f1": clf.MultilabelF1Score(
-        num_labels=int(np.sum(self.mask)), average="micro"
+    return ExtendedMetricSet(data={
+      "target_macro_f1": ExtendedMetric(
+        metric=clf.MultilabelF1Score(
+          num_labels=int(np.sum(self.mask)), average="macro"
+        ), args=["preds", "hards"],
+      ), "target_micro_f1": ExtendedMetric(
+        metric=clf.MultilabelF1Score(
+          num_labels=int(np.sum(self.mask)), average="micro"
+        ), args=["preds", "hards"],
+      ), "target_f1_{}": ExtendedMetric(
+        metric=clf.MultilabelF1Score(
+          num_labels=int(np.sum(self.mask)), average="none"
+        ), args=["preds", "hards"],
+        labels=self.apply_mask_to_labels(self.labels)
       )
     })
 
@@ -158,15 +173,18 @@ class TargetHead(HateHead):
 class LabelHead(HateHead):
   name = "label"
   loss_args = ["logits", "trues"]
-  metrics_args = ["preds", "hards"]
   
   def make_loss(self):
     return MyBCELoss(freq=self.stats.label_freqs)
 
   def make_metrics(self):
-    return MetricCollection({"label_f1": clf.MulticlassF1Score(
-      num_classes=self.output_dim, average="macro"
-    )})
+    return ExtendedMetricSet(data={
+      "label_f1": ExtendedMetric(
+        metric=clf.MulticlassF1Score(
+          num_classes=self.output_dim, average="macro"
+        ), args=["preds", "hards"]
+      )
+    })
 
   def forward(self, output, batch):
     hidden = output.last_hidden_state.float()
@@ -181,13 +199,17 @@ class LabelHead(HateHead):
 class ScoreHead(HateHead):
   name = "score"
   loss_args = ["preds", "trues"]
-  metrics_args = ["preds", "trues"]
 
   def make_loss(self):
     return nn.MSELoss()
 
   def make_metrics(self):
-    return MetricCollection({"score_mse": reg.MeanSquaredError()})
+    return ExtendedMetricSet(data={
+      "score_mse": ExtendedMetric(
+        metric=reg.MeanSquaredError(),
+        args=["preds", "trues"],
+      )
+    })
   
   def forward(self, output, batch):
     hidden = output.last_hidden_state.float()
@@ -224,7 +246,7 @@ class HateHeads(nn.Module):
         output_dim=task.output_dim,
         mask=task.mask,
         shrink_output=task.shrink_output,
-        stats = stats,
+        stats=stats,
       )
 
     if load and path is not None:

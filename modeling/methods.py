@@ -39,7 +39,7 @@ class AdapterMethod(ABC):
   @staticmethod
   def load_sources(model: AdapterModel, source_base: str, sources: List[str]) -> None:
     for source in sources:
-      model.load_adapter(f"{source_base}/{source}/adapter", load_as=source, with_head=False)
+      model.load_adapter(f"{source_base}/{source}/encoder/adapter", load_as=source, with_head=False)
 
 class LoadAdapterMethod(AdapterMethod):
   def __init__(self, path):
@@ -47,7 +47,7 @@ class LoadAdapterMethod(AdapterMethod):
     self.path = path
 
   def _apply(self, model):
-    model.load_adapter(f"{self.path}/adapter", load_as="adapter", with_head=False)
+    model.load_adapter(f"{self.path}/encoder/adapter", load_as="adapter", with_head=False)
     model.train_adapter("adapter")
 
 class NoAdapterMethod(AdapterMethod):
@@ -112,7 +112,7 @@ class FuseAdapterMethod(AdapterMethod):
 
 method_store = store(group="method", to_config=remove_types)
 method_store(builds(NoAdapterMethod), name="full")
-method_store(builds(LoadAdapterMethod, path="${load_path}/encoder"), name="load")
+method_store(builds(LoadAdapterMethod, path="${load_path}"), name="ah_load")
   
 for r in [8, 16, 24, 32]:
   method_store(builds(

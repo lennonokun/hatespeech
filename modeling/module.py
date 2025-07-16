@@ -125,17 +125,17 @@ class HateModule(LightningModule):
     )
 
   def forward(self, batches, split):
-    metricss, losses, sizes = {}, {}, {}
+    log_metricss, losses, sizes = {}, {}, {}
     for set_name in self.tasks.datasets():
       batch = batches[set_name]
       output = self.forward_base(batch)
 
       for task_name, task in self.tasks.items():
         if task.dataset == set_name:
-          metricss[task_name], losses[task_name] = self.heads[task_name].compute(output, batch, split)
+          log_metricss[task_name], losses[task_name] = self.heads[task_name].compute(output, batch, split)
           sizes[task_name] = batch["size"]
 
-    return metricss, losses, sizes
+    return log_metricss, losses, sizes
 
   def loss_weights(self, sizes):
     loss_counts = torch.Tensor(np.concatenate([
@@ -151,14 +151,15 @@ class HateModule(LightningModule):
     if any(x["size"] == 0 for x in batches.values()):
       return None
     
-    metricss, losses, sizes = self.forward(batches, split)
+    log_metricss, losses, sizes = self.forward(batches, split)
     weights = self.loss_weights(sizes)
       
     log_kwargs = {"prog_bar": split == "test", "on_epoch": True, "on_step": False}
 
     # log metrics
-    for name, metrics in metricss.items():
-      self.log_dict(metrics, batch_size=sizes[name], **log_kwargs)
+    for name, log_metrics in log_metricss.items():
+      log_metrics(self, batch_size=sizes[name], **log_kwargs)
+      # self.log_dict(log_metrics, batch_size=sizes[name], **log_kwargs)
 
     # log losses
     if split != "test":
