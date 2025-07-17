@@ -1,11 +1,13 @@
 from typing import *
-import numpy.typing as npt
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, computed_field
+import re
 
 import numpy as np
 import math
 from hydra_zen import store
 from .utils import *
+
+MASK_PATTERN = r"^(\d+)\s+(\d+)$"
 
 class Task(BaseModel):
   dataset: str
@@ -14,24 +16,19 @@ class Task(BaseModel):
   output_dim: int
   loss_dim: int
   shrink_output: bool
-  mask: Any = None
-  mask_numerator: int | None = None
-  mask_denominator: int | None = None
+  mask_pattern: str = Field(default="1 1", pattern=MASK_PATTERN)
 
-  @model_validator(mode="after")
-  def val(self):
-    # TODO this would mean extraneous head output
-    if self.mask is None:
-      if self.mask_numerator is not None and self.mask_denominator is not None:
-        self.mask = np.zeros(self.loss_dim, dtype=np.bool_)
-        lower = math.ceil((self.mask_numerator-1) / self.mask_denominator * self.loss_dim)
-        upper = math.ceil(self.mask_numerator / self.mask_denominator * self.loss_dim)
-        self.mask[lower: upper] = True
-      else:
-        self.mask = np.ones(self.loss_dim, dtype=np.bool_)
-    else:
-      self.mask = np.array(self.mask, dtype=np.bool_)
-    return self
+  @computed_field
+  @property
+  def mask(self) -> Any:
+    match = re.match(MASK_PATTERN, self.mask_pattern)
+    assert match is not None
+    a, b = int(match.group(1)), int(match.group(2))
+    out = np.zeros(self.loss_dim, dtype=np.bool_)
+    lower = math.ceil((a - 1) / b * self.loss_dim)
+    upper = math.ceil(a / b * self.loss_dim)
+    out[lower: upper] = True
+    return out
 
   @property
   def mask_sum(self):

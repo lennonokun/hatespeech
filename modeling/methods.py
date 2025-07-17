@@ -1,6 +1,7 @@
 from typing import *
 from abc import ABC, abstractmethod
 
+import glob
 import torch as pt
 import adapters as ad
 from adapters import composition as ac
@@ -31,24 +32,31 @@ class AdapterMethod(ABC):
     return model
 
   @staticmethod
-  def adjust_dtypes(model): 
+  def adjust_dtypes(model: AdapterModel) -> None:
     for name, param in model.named_parameters():
       if "adapter" in name or "lora" in name or "compacter" in name:
         param.data = param.data.to(pt.bfloat16)
 
   @staticmethod
-  def load_sources(model: AdapterModel, source_base: str, sources: List[str]) -> None:
-    for source in sources:
-      model.load_adapter(f"{source_base}/{source}/encoder/adapter", load_as=source, with_head=False)
+  def load_source(model: AdapterModel, source: str) -> None:
+    model.load_adapter(f"{source}/encoder/adapter", load_as="adapter", with_head=False)
+        
+  @staticmethod
+  def load_sources(model: AdapterModel, pattern: str) -> List[str]:
+    out = []
+    for i, source in enumerate(glob.glob(pattern)):
+      model.load_adapter(f"{source}/encoder/adapter", load_as=f"source{i}", with_head=False)
+      out.append(f"source{i}")
+    return out
 
 class LoadAdapterMethod(AdapterMethod):
-  def __init__(self, path):
+  def __init__(self, source):
     super().__init__()
-    self.path = path
+    self.source = source
 
   def _apply(self, model):
-    model.load_adapter(f"{self.path}/encoder/adapter", load_as="adapter", with_head=False)
-    model.train_adapter("adapter")
+    self.load_source(model, self.source)
+    model.train_adapter("adapter") # pyright: ignore
 
 class NoAdapterMethod(AdapterMethod):
   def __init__(self):
@@ -82,37 +90,36 @@ class SingleAdapterMethod(AdapterMethod):
     model.train_adapter("adapter") # pyright: ignore
 
 class MergeAdapterMethod(AdapterMethod):
-  def __init__(self, source_base: str, sources: List[str], svd_rank: int):
+  def __init__(self, sources: str, svd_rank: int):
     super().__init__()
-    self.source_base = source_base
+    print(sources)
     self.sources = sources
     self.svd_rank = svd_rank
 
   def _apply(self, model):
-    self.load_sources(model, self.source_base, self.sources)
+    adapter_list = self.load_sources(model, self.sources)
     model.average_adapter(
-      adapter_name="merged",
-      adapter_list=self.sources, # TODO INCORRECT
+      adapter_name="adapter",
+      adapter_list=adapter_list,
       combine_strategy="lora_delta_w_svd",
       svd_rank=self.svd_rank,
     )
-    model.train_adapter("merged") # pyright: ignore
+    model.train_adapter("adapter") # pyright: ignore
 
 class FuseAdapterMethod(AdapterMethod):
-  def __init__(self, source_base: str, sources: List[str]):
+  def __init__(self, sources: str):
     super().__init__()
-    self.source_base = source_base
     self.sources = sources
 
   def _apply(self, model):
-    self.load_sources(model, self.source_base, self.sources)
-    fusion = ac.Fuse(sources) # pyright: ignore
+    adapter_list = self.load_sources(model, self.sources)
+    fusion = ac.Fuse(adapter_list) # pyright: ignore
     model.add_adapter_fusion(fusion)
     model.train_adapter_fusion(fusion)
 
 method_store = store(group="method", to_config=remove_types)
 method_store(builds(NoAdapterMethod), name="full")
-method_store(builds(LoadAdapterMethod, path="${load_path}"), name="ah_load")
+method_store(builds(LoadAdapterMethod, source="${load_path}"), name="ah_load")
   
 for r in [8, 16, 24, 32]:
   method_store(builds(
@@ -140,7 +147,6 @@ for r in [8, 16, 24, 32]:
   ), name=f"ah_lora{r}")
   method_store(builds(
     MergeAdapterMethod,
-    source_base=MISSING,
     sources=MISSING,
     svd_rank=r,
   ), name=f"ah_merge{r}")
@@ -168,6 +174,5 @@ for f in [64, 32, 16]:
   ), name=f"ah_aplus{f}")
 method_store(builds(
   FuseAdapterMethod,
-  source_base=MISSING,
-  sources=MISSING,
+  sources=MISSING
 ), name="ah_fuse")
