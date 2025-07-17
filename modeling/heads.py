@@ -155,7 +155,16 @@ class TargetHead(HateHead):
         metric=clf.MultilabelF1Score(
           num_labels=int(np.sum(self.mask)), average="none"
         ), args=["preds", "hards"],
-        labels=self.apply_mask_to_labels(self.labels)
+        labelss=[self.apply_mask_to_labels(self.labels)]
+      ), "target_confusion_{}_{}_{}": ExtendedMetric(
+        metric=clf.MultilabelConfusionMatrix(
+          num_labels=int(np.sum(self.mask)),
+        ), args=["preds", "hards"],
+        labelss=[
+          self.apply_mask_to_labels(self.labels),
+          ["neg", "pos"],
+          ["neg", "pos"],
+        ], reduce_fx="sum",
       )
     })
 

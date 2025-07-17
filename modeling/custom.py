@@ -20,48 +20,51 @@ class ExtendedMetric:
     self,
     metric: Metric,
     args: List[str],
-    labels: List[str] | None = None
+    labelss: List[List[str]] | None = None,
+    reduce_fx: str = "mean"
   ):
     self.metric = metric
     self.args = args
-    self.labels = labels
+    self.labelss = labelss if labelss is not None else []
+    self.reduce_fx = reduce_fx
 
-  def log(self, name: str, module: LightningModule, results: Dict[str, pt.Tensor], **kwargs):
+  def _iter_values(self, name, values):
+    if values.ndim != len(self.labelss):
+      raise ValueError(
+        f"dimension size mismatch: {values.ndim=} does not match {len(self.labelss)=}"
+      )
+    for i, (dim, labels) in enumerate(zip(values.shape, self.labelss)):
+      if dim != len(labels):
+        raise ValueError(
+          f"dimension mismatch: {dim=} does {len(labels)=} not match at dimension {i}"
+        )
+
+    it = np.nditer(values.cpu().numpy(), flags=["multi_index"])
+    for value in it:
+      active_labels = [labels[i] for i, labels in zip(it.multi_index, self.labelss)]
+      yield name.format(*active_labels), value.item()
+    
+  def log(
+    self,
+    name: str,
+    module: LightningModule,
+    results: Dict[str, pt.Tensor],
+    **kwargs
+  ):
     values = self.metric(*[results[arg] for arg in self.args])
-    if values.ndim == 0:
-      if self.labels is not None:
-        raise ValueError(f"invalid labels, got {self.labels}, expected None")
-      module.log(name, values, **kwargs)
-    elif values.ndim == 1:
-      if self.labels is None or len(self.labels) != len(values):
-        raise ValueError(f"invalid labels, got {self.labels}, expected length of {len(values)}")
-      for label, value in zip(self.labels, values):
-        module.log(name.format(label), value, **kwargs)
-    else:
-      raise RuntimeError(f"metric can only return values of dimension 0 or 1, not {values.ndim}")
+    for formatted, value in self._iter_values(name, values):
+      module.log(formatted, value, reduce_fx=self.reduce_fx, **kwargs)
 
   def compute(self, name):
     computed = self.metric.compute()
-    out = {}
-    if computed.ndim == 0:
-      if self.labels is not None:
-        raise ValueError(f"invalid labels, got {self.labels}, expected None")
-      out[name] = computed.detach().item()
-    elif computed.ndim == 1:
-      if self.labels is None or len(self.labels) != len(computed):
-        raise ValueError(f"invalid labels, got {self.labels}, expected length of {len(computed)}")
-      for label, value in zip(self.labels, computed):
-        out[name.format(label)] = value.detach().item()
-    else:
-      raise RuntimeError(f"metric can only return values of dimension 0 or 1, not {computed.ndim}")
-
-    return out
+    return {formatted: value for formatted, value in self._iter_values(name, computed)}
     
   def clone(self):
     return ExtendedMetric(
       self.metric.clone(),
       deepcopy(self.args),
-      deepcopy(self.labels)
+      deepcopy(self.labelss),
+      deepcopy(self.reduce_fx),
     )
 
   def reset(self):

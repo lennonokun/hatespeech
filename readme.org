@@ -43,12 +43,13 @@ uv run main.py tasks=[target] action=test tasks.target.mask_pattern="3 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_3
 uv run main.py tasks=[target] action=test tasks.target.mask_pattern="4 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_4
+uv run analysis/partition_f1.py "adapters/small/lora16/target_part_*/results.csv"
 # test merge
 uv run main.py tasks=[target] action=test method=ah_load heads.load=true \
 	 load_path=adapters/small/lora16/target_merge
 # train single
 uv run main.py tasks=[target] action=test method=ah_load heads.load=True \
-	 load_path=adapters/small/lora16/target_single
+	load_path=adapters/small/lora16/target_single
 #+end_src
 
 RESULTS
@@ -57,20 +58,20 @@ RESULTS
 - make sure this isnt a result of too early stopping
 
 | metrics                   | partitioned | single | merged (warmup=15) |
-|---------------------------+-------------+--------+--------------------+
-| test_target_f1_african    |       0.791 |  0.780 |              0.814 |
-| test_target_f1_arab       |       0.620 |  0.494 |              0.521 |
-| test_target_f1_asian      |       0.663 |  0.651 |              0.667 |
-| test_target_f1_caucasian  |       0.363 |  0.322 |              0.395 |
-| test_target_f1_hispanic   |       0.719 |  0.540 |              0.605 |
-| test_target_f1_homosexual |       0.807 |  0.761 |              0.784 |
-| test_target_f1_islam      |       0.717 |  0.673 |              0.694 |
-| test_target_f1_jewish     |       0.880 |  0.877 |              0.880 |
-| test_target_f1_other      |       0.285 |  0.247 |              0.270 |
-| test_target_f1_refugee    |       0.644 |  0.570 |              0.624 |
-| test_target_f1_women      |       0.553 |  0.524 |              0.580 |
-| test_target_macro_f1      |        TODO |  0.585 |              0.621 |
-| test_target_micro_f1      |        TODO |  0.609 |              0.666 |
+|---------------------------+-------------+--------+--------------------|
+| test_target_f1_african    |       0.790 |  0.780 |              0.814 |
+| test_target_f1_arab       |       0.630 |  0.494 |              0.521 |
+| test_target_f1_asian      |       0.653 |  0.651 |              0.667 |
+| test_target_f1_caucasian  |       0.405 |  0.322 |              0.395 |
+| test_target_f1_hispanic   |       0.725 |  0.540 |              0.605 |
+| test_target_f1_homosexual |       0.806 |  0.761 |              0.784 |
+| test_target_f1_islam      |       0.721 |  0.673 |              0.694 |
+| test_target_f1_jewish     |       0.889 |  0.877 |              0.880 |
+| test_target_f1_other      |       0.281 |  0.247 |              0.270 |
+| test_target_f1_refugee    |       0.648 |  0.570 |              0.624 |
+| test_target_f1_women      |       0.572 |  0.524 |              0.580 |
+| test_target_macro_f1      |       0.647 |  0.585 |              0.621 |
+| test_target_micro_f1      |       0.680 |  0.609 |              0.666 |
 
 * notes
 - could pre train adapter on much much larger non labeled corpus
