@@ -40,6 +40,23 @@ class ExtendedMetric:
     else:
       raise RuntimeError(f"metric can only return values of dimension 0 or 1, not {values.ndim}")
 
+  def compute(self, name):
+    computed = self.metric.compute()
+    out = {}
+    if computed.ndim == 0:
+      if self.labels is not None:
+        raise ValueError(f"invalid labels, got {self.labels}, expected None")
+      out[name] = computed.detach().item()
+    elif computed.ndim == 1:
+      if self.labels is None or len(self.labels) != len(computed):
+        raise ValueError(f"invalid labels, got {self.labels}, expected length of {len(computed)}")
+      for label, value in zip(self.labels, computed):
+        out[name.format(label)] = value.detach().item()
+    else:
+      raise RuntimeError(f"metric can only return values of dimension 0 or 1, not {computed.ndim}")
+
+    return out
+    
   def clone(self):
     return ExtendedMetric(
       self.metric.clone(),
@@ -68,6 +85,9 @@ class ExtendedMetricSet:
       for name, emetric in self.data.items()
     })
 
+  def compute(self):
+    return {k: v for name, emetric in self.data.items() for k, v in emetric.compute(name).items()}
+  
   def cuda(self):
     self.data = {name: emetric.cuda() for name, emetric in self.data.items()}
     return self

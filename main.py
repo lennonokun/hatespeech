@@ -65,11 +65,13 @@ def main(
   if action == "train":
     trainer.fit(module, datamodule=datamodule)
     trainer.test(module, datamodule=datamodule)
+    module.save(action)
   elif action == "test":
     trainer.test(module, datamodule=datamodule)
+    module.save(action)
+    # save results 
   else:
     raise ValueError(f"invalid action specified: {action}")
-  module.save()
 
 if __name__ == "__main__":
   store(HydraConf(job=JobConf(chdir=False)))

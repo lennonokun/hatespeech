@@ -255,6 +255,9 @@ class HateHeads(nn.Module):
   def __getitem__(self, name: str) -> HateHead:
     return cast(HateHead, self.mapping[name])
 
+  def list(self):
+    return self.mapping.values()
+
   def save(self, path: str):
     pt.save(self.mapping.state_dict(), path)
 

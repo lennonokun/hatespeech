@@ -3,8 +3,8 @@ from pydantic import BaseModel
 from hydra_zen import store
 
 import numpy as np
+import csv
 import torch
-from pathlib import Path
 
 from pytorch_optimizer import load_optimizer, Lookahead
 from torch.optim.lr_scheduler import *
@@ -97,6 +97,7 @@ class HateModule(LightningModule):
     self.tasks = tasks
     self.mtl_loss = mtl_loss
     self.save_path = save_path
+    self.results = None
 
   def vis_params(self):
     params = list(self.encoder.named_parameters())
@@ -110,13 +111,22 @@ class HateModule(LightningModule):
     for k, v in no_grad_params:
       print(f"  {k:{max_name_len}}  {str(v.dtype):15s}  {str(v.shape):15s}")
   
-  def save(self):
+  def _write_results(self, path):
+    if self.results is not None:
+      writer = csv.DictWriter(open(path, "w"), self.results.keys())
+      writer.writeheader()
+      writer.writerow(self.results)
+  
+  def save(self, action: str):
     if self.save_path is None:
       print("not saving, no save_path specified")
-    else:
+    elif action == "train":
       print(f"saving to {self.save_path}")
       self.encoder.save_all_adapters(f"{self.save_path}/encoder")
       self.heads.save(f"{self.save_path}/heads.pt")
+      self._write_results(f"{self.save_path}/results.csv")
+    elif action == "test":
+      self._write_results(f"{self.save_path}/results.csv")
 
   def forward_base(self, batch):
     return self.encoder(
@@ -202,6 +212,10 @@ class HateModule(LightningModule):
     self.on_split_epoch_end("valid")
     
   def on_test_epoch_end(self):
+    self.results = {
+      k: v for head in self.heads.list()
+      for k, v in head.metrics["test"].compute().items() # pyright: ignore
+    }
     self.on_split_epoch_end("test")
 
 quant_store = store(group="quantization")
