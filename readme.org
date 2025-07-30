@@ -33,7 +33,7 @@ HateXplain:
 - then, preprocess with ~uv run -m scripts.preprocess preprocessor=explain~
   
 Measuring Hate Speech:
-- preprocess with ~uv run -m scripts.preprocessor preprocessor=measuring~
+- preprocess with ~uv run -m scripts.preprocess preprocessor=measuring~
 
 ** training and testing models
 
