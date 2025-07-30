@@ -1,28 +1,16 @@
 from typing import *
-from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from functools import partial
 
-import json
 import numpy as np
 import torch as pt
 from torch import nn
 from transformers import PreTrainedModel
 from torchmetrics import classification as clf, regression as reg
-from hydra_zen import store
 
-from .utils import *
-from .custom import MaskedBinaryF1, MyBCELoss, FocalLoss, ExtendedMetric, ExtendedMetricSet
+from common import DataInfo, fbuilds, store
+from .misc import MaskedBinaryF1, MyBCELoss, FocalLoss, ExtendedMetric, ExtendedMetricSet
 from .tasks import TaskSet
-
-class Stats(BaseModel):
-  label_freqs: List[float]
-  target_freqs: List[float]
-  rationale_freq: float
-
-  @classmethod
-  def from_json(cls, path: str):
-    return cls(**json.load(open(path, "r")))
 
 class HateHead(ABC, nn.Module):
   name: ClassVar[str]
@@ -36,9 +24,9 @@ class HateHead(ABC, nn.Module):
     output_dim: int,
     mask,
     shrink_output: bool,
-    stats: Stats,
+    data_info: DataInfo
   ):
-    self.stats = stats
+    self.data_info = data_info
     ABC.__init__(self)
     nn.Module.__init__(self)
 
@@ -138,7 +126,7 @@ class TargetHead(HateHead):
   ]
   
   def make_loss(self):
-    freq = np.array(self.stats.target_freqs)[self.mask]
+    freq = np.array(self.data_info.stats.target_freqs)[self.mask]
     return MyBCELoss(freq=freq, reduce_dim=0)
 
   def make_metrics(self):
@@ -184,7 +172,7 @@ class LabelHead(HateHead):
   loss_args = ["logits", "trues"]
   
   def make_loss(self):
-    return MyBCELoss(freq=self.stats.label_freqs)
+    return MyBCELoss(freq=self.data_info.stats.label_freqs)
 
   def make_metrics(self):
     return ExtendedMetricSet(data={
@@ -237,7 +225,7 @@ class HateHeads(nn.Module):
     shape: List[int],
     tasks: TaskSet,
     model: PreTrainedModel,
-    stats: Stats,
+    data_info: DataInfo,
     path: str | None,
     load: bool,
   ):
@@ -255,7 +243,7 @@ class HateHeads(nn.Module):
         output_dim=task.output_dim,
         mask=task.mask,
         shrink_output=task.shrink_output,
-        stats=stats,
+        data_info=data_info,
       )
 
     if load and path is not None:
@@ -273,8 +261,6 @@ class HateHeads(nn.Module):
   def load(self, path: str):
     self.load_state_dict(pt.load(path, weights_only=True))
 
-StatsCfg = fbuilds(Stats.from_json, path="data/stats.json")
-
 heads_store = store(group="heads")
 shapes = {
   "xsmall": [64, 64],
@@ -289,7 +275,7 @@ for name, shape in shapes.items():
     dropout=0.2,
     shape=shape,
     model="${model}",
-    stats=StatsCfg, 
+    data_info="${data_info}",
     tasks="${tasks}",
     path="${load_path}/heads.pt",
     load=False,

@@ -1,15 +1,11 @@
 from pyspark.sql import functions as F
 
+from common import store, fbuilds
 from . import utils
-from .preprocessor import Preprocessor
+from .base_preprocessor import Preprocessor
 
 class MeasuringPreprocessor(Preprocessor):
   name = "measuring"
-  
-  def __init__(self, config):
-    super().__init__(config)
-    self.config = config
-    self.pudf_tokenize = utils.pudf_tokenize(config)
   
   def preprocess(self, df):
     df = df.groupBy("comment_id") \
@@ -24,3 +20,12 @@ class MeasuringPreprocessor(Preprocessor):
 
   def get_stats(self, df):
     return {}
+
+preprocessor_store = store(group="preprocessor")
+preprocessor_store(fbuilds(
+  MeasuringPreprocessor,
+  data_info="${data_info}",
+  model_name="google/electra-base-discriminator",
+  max_length=128,
+  round_train=[],
+), name="measuring")

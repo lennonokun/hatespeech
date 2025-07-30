@@ -1,16 +1,12 @@
+import torch as pt
 from typing import *
-# import warnings
-
 from lightning import Trainer
-import torch
 
-from hydra_zen import store, zen, make_config
-from hydra.conf import HydraConf, JobConf
+from common import make_config, run_hydra, DataInfoCfg
+from modeling import TrainerCfg, HateModuleCfg, HateDatamoduleCfg
+from modeling import HateModule, HateDatamodule 
 
-# from preprocessing import load_stats, do_fix, construct_preprocessor
-from modeling import *
-
-TrainCfg = make_config(
+Config = make_config(
   hydra_defaults=[
     "_self_",
     # misc
@@ -42,43 +38,36 @@ TrainCfg = make_config(
   heads=None,
   # datamodule
   datamodule=HateDatamoduleCfg,
-  # debug
-  debug=HateDebugCfg,
+  data_info=DataInfoCfg,
+  # misc
+  action="train",
   save_path=None,
   load_path=None,
-  action="train",
+  vis_params=False,
 )
 
 def main(
   module: HateModule,
   datamodule: HateDatamodule,
-  debug: HateDebug,
   trainer: Trainer,
   action: str,
+  vis_params: bool,
 ):
-  torch.cuda.empty_cache()
-  torch.set_float32_matmul_precision("medium")
+  pt.cuda.empty_cache()
+  pt.set_float32_matmul_precision("medium")
 
-  if debug.vis_params:
+  if vis_params:
     module.vis_params()
 
   if action == "train":
     trainer.fit(module, datamodule=datamodule)
     trainer.test(module, datamodule=datamodule)
-    module.save(action)
   elif action == "test":
     trainer.test(module, datamodule=datamodule)
-    module.save(action)
-    # save results 
   else:
     raise ValueError(f"invalid action specified: {action}")
 
+  module.save(action)
+
 if __name__ == "__main__":
-  store(HydraConf(job=JobConf(chdir=False)))
-  store(TrainCfg, name="config")
-  store.add_to_hydra_store(overwrite_ok=True)
-  zen(main).hydra_main(
-    config_name="config",
-    version_base="1.3",
-    config_path=None,
-  )
+  run_hydra(main, Config)

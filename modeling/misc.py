@@ -2,12 +2,9 @@ from typing import *
 from copy import deepcopy
 
 import numpy as np
-
 import torch as pt
 from torch import nn
 from torch.nn import functional as F
-
-# from lightning.pypt.callbacks.callback import Callback
 
 from torchmetrics import Metric
 from lightning import LightningModule
@@ -42,7 +39,7 @@ class ExtendedMetric:
     it = np.nditer(values.cpu().numpy(), flags=["multi_index"])
     for value in it:
       active_labels = [labels[i] for i, labels in zip(it.multi_index, self.labelss)]
-      yield name.format(*active_labels), value.item()
+      yield name.format(*active_labels), value.item() # pyright: ignore
     
   def log(
     self,

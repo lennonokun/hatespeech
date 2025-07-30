@@ -16,39 +16,39 @@ TODO MAKE THESE EXPERIMENTS?
 TRAINING FROM SCRATCH
 #+begin_src sh
 # train partitions
-uv run main.py tasks=[target] tasks.target.mask_pattern="1 4" \
+uv run -m scripts.model tasks=[target] tasks.target.mask_pattern="1 4" \
 	 save_path=adapters/small/lora16/target_part_1
-uv run main.py tasks=[target] tasks.target.mask_pattern="2 4" \
+uv run -m scripts.model tasks=[target] tasks.target.mask_pattern="2 4" \
 	 save_path=adapters/small/lora16/target_part_2
-uv run main.py tasks=[target] tasks.target.mask_pattern="3 4" \
+uv run -m scripts.model tasks=[target] tasks.target.mask_pattern="3 4" \
 	 save_path=adapters/small/lora16/target_part_3
-uv run main.py tasks=[target] tasks.target.mask_pattern="4 4" \
+uv run -m scripts.model tasks=[target] tasks.target.mask_pattern="4 4" \
 	 save_path=adapters/small/lora16/target_part_4
 # train merge
-uv run main.py tasks=[target] method=ah_merge16 optimization.warmup=15 \
+uv run -m scripts.model tasks=[target] method=ah_merge16 optimization.warmup=15 \
 	 method.sources="'adapters/small/lora16/target_part_*'" \
 	 save_path=adapters/small/lora16/target_merge 
 # train single
-uv run main.py tasks=[target] save_path=adapters/small/lora16/target_single
+uv run -m scripts.model tasks=[target] save_path=adapters/small/lora16/target_single
 #+end_src
 
 TESTING
 #+begin_src sh
 # test partitions
-uv run main.py tasks=[target] action=test tasks.target.mask_pattern="1 4" \
+uv run -m scripts.model tasks=[target] action=test tasks.target.mask_pattern="1 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_1
-uv run main.py tasks=[target] action=test tasks.target.mask_pattern="2 4" \
+uv run -m scripts.model tasks=[target] action=test tasks.target.mask_pattern="2 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_2
-uv run main.py tasks=[target] action=test tasks.target.mask_pattern="3 4" \
+uv run -m scripts.model tasks=[target] action=test tasks.target.mask_pattern="3 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_3
-uv run main.py tasks=[target] action=test tasks.target.mask_pattern="4 4" \
+uv run -m scripts.model tasks=[target] action=test tasks.target.mask_pattern="4 4" \
 	 method=ah_load heads.load=true load_path=adapters/small/lora16/target_part_4
-uv run analysis/partition_f1.py "adapters/small/lora16/target_part_*/results.csv"
+uv run -m scripts.partition_f1 results_glob="'adapters/small/lora16/target_part_*/results.csv'"
 # test merge
-uv run main.py tasks=[target] action=test method=ah_load heads.load=true \
+uv run -m scripts.model tasks=[target] action=test method=ah_load heads.load=true \
 	 load_path=adapters/small/lora16/target_merge
 # train single
-uv run main.py tasks=[target] action=test method=ah_load heads.load=True \
+uv run -m scripts.model tasks=[target] action=test method=ah_load heads.load=True \
 	load_path=adapters/small/lora16/target_single
 #+end_src
 
@@ -81,6 +81,11 @@ RESULTS
 - todo try longer encoder warmups, larger models, fusion, multi
   dataset, other tasks
 - todo parallel, but probably they should not be trainable
+- todo preprocessing stats file should be per dataset
+- todo better logging
+- should preprocessing have dataset be an argument and not
+  preprocessor be a store
+- todo use more targets?
 
 ** limitations
 - AutoAdapterModel cannot do quantized LoRA TODO check

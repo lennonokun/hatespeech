@@ -1,8 +1,14 @@
 {
-	"target": [
-		"African", "Arab", "Asian", "Caucasian", "Hispanic",
-		"Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
-	], "label": [
-		"hatespeech", "offensive", "normal"
-	]
+	"explain_dirty_path": "data/explain/dirty.json",
+	"input_dataset_path": "data/{name}/input.parquet",
+	"output_dataset_path": "data/{name}/output_{split}.parquet",
+	"output_stats_path": "data/{name}/stats.json",
+	"cols": {
+		"target": [
+			"African", "Arab", "Asian", "Caucasian", "Hispanic",
+			"Homosexual", "Islam", "Jewish", "Other", "Refugee", "Women"
+		], "label": [
+			"hatespeech", "offensive", "normal"
+		]
+	}
 }

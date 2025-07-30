@@ -1,11 +1,10 @@
 from typing import *
 from pydantic import BaseModel, Field, computed_field
 import re
-
 import numpy as np
 import math
-from hydra_zen import store
-from .utils import *
+
+from common import fbuilds, remove_types, store
 
 MASK_PATTERN = r"^(\d+)\s+(\d+)$"
 
@@ -30,9 +29,10 @@ class Task(BaseModel):
     out[lower: upper] = True
     return out
 
+  @computed_field
   @property
-  def mask_sum(self):
-    return np.sum(self.mask)
+  def mask_sum(self) -> int:
+    return int(np.sum(self.mask))
   
 # TODO maybe UserDict?
 class TaskSet:

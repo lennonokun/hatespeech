@@ -1,29 +1,13 @@
 from typing import *
-from hydra_zen import builds
-from pydantic import BaseModel
-
 import numpy as np
 import pandas as pd
-import json
-# from pathlib import Path
 
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, RandomSampler
 
+from common import DataInfo, builds
 from .tasks import TaskSet
-
-class DatasetInfo(BaseModel):
-  dataset_path: str
-  cats: Dict[str, List[str]]
-
-  @property
-  def cols(self):
-    return {k: [f"{k}_{x}" for x in v] for k,v in self.cats.items()}
-
-  @classmethod
-  def from_config(cls, col_info_path: str, dataset_path: str):
-    return cls(dataset_path=dataset_path, cats=json.load(open(col_info_path, "r")))
 
 # TODO shared feature
 # batch sampled
@@ -67,17 +51,17 @@ class HateDataset(Dataset):
     batch_size: int,
     dynamic_length: bool,
     max_length: int,
-    info: DatasetInfo,
+    data_info: DataInfo,
     split: str,
   ):
     self.batch_size = batch_size
     self.dynamic_length = dynamic_length
     self.max_length = max_length
-    self.df = pd.read_parquet(info.dataset_path.format(name=self.name, split=split))
+    self.df = pd.read_parquet(data_info.output_dataset_path.format(name=self.name, split=split))
 
     self.locs = {}
     for var in self.multis:
-      self.locs[var] = [self.df.columns.get_loc(col) for col in info.cols[var]]
+      self.locs[var] = [self.df.columns.get_loc(col) for col in data_info.cols[var]]
     for var in self.unis:
       self.locs[var] = self.df.columns.get_loc(var)
 
@@ -166,14 +150,14 @@ class HateDatamodule(LightningDataModule):
     batch_size: int,
     dynamic_length: bool,
     max_length: int,
-    info: DatasetInfo,
+    data_info: DataInfo,
     tasks: TaskSet
   ):
     super().__init__()
     self.batch_size = batch_size
     self.dynamic_length = dynamic_length
     self.max_length = max_length
-    self.info = info
+    self.data_info = data_info
     self.tasks = tasks
   
   def _select_data(self, split):
@@ -182,7 +166,7 @@ class HateDatamodule(LightningDataModule):
         batch_size=self.batch_size,
         dynamic_length=self.dynamic_length,
         max_length=self.max_length,
-        info=self.info,
+        data_info=self.data_info,
         split=split,
       )
       for name in self.tasks.datasets()
@@ -223,17 +207,12 @@ class HateDatamodule(LightningDataModule):
   def test_dataloader(self):
     return self._get_dataloader("test")
 
-DatasetInfoCfg = builds(
-  DatasetInfo.from_config,
-  col_info_path="data/col_info.json",
-  dataset_path="data/{name}/output_{split}.parquet"
-)
 HateDatamoduleCfg = builds(
   HateDatamodule,
   batch_size = 200,
   max_length = 128,
   dynamic_length = True,
-  info=DatasetInfoCfg,
+  data_info="${data_info}",
   tasks="${tasks}",
 )
 

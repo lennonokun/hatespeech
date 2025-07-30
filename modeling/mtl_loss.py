@@ -5,10 +5,8 @@ import torch
 from torch.nn import functional as F
 from torch import nn
 
-from hydra_zen import store
-
 from .tasks import TaskSet
-from .utils import *
+from common import fbuilds, store
 
 class MTLLoss(ABC, nn.Module):
   def __init__(self, tasks: TaskSet):

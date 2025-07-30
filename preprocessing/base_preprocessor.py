@@ -1,17 +1,29 @@
 from abc import ABC, abstractmethod
-from typing import * # pyright: ignore[reportWildcardImportFromLibrary]
+from typing import *
 
 import json
 from pyspark.sql import functions as F
 
+from common import DataInfo
 from . import utils
 
 class Preprocessor(ABC):
   name: ClassVar[str]
   
-  def __init__(self, config):
+  def __init__(
+    self,
+    data_info: DataInfo,
+    model_name: str,
+    max_length: int,
+    round_train: List[str]
+  ):
     super().__init__()
-    self.config = config
+    self.data_info = data_info
+    self.round_train = round_train
+    self.pudf_tokenize = utils.pudf_tokenize(model_name, max_length)
+
+  def _post_init(self):
+    pass
 
   @abstractmethod
   def preprocess(self, df):
@@ -29,7 +41,7 @@ class Preprocessor(ABC):
   def read(self):
     print("do read")
     spark = utils.get_spark_session()
-    path = self.config["input_dataset_path"].format(name=self.name)
+    path = self.data_info.input_dataset_path.format(name=self.name)
     return spark.read.parquet(path)
 
   def write(self, df, stats):
@@ -37,10 +49,10 @@ class Preprocessor(ABC):
     split_dfs = df.orderBy(F.rand()).randomSplit([0.8, 0.1, 0.1])
     split_names = ["train", "valid", "test"]
     for split_df, split in zip(split_dfs, split_names):
-      file_path = self.config["output_dataset_path"] \
+      file_path = self.data_info.output_dataset_path \
         .format(name=self.name, split=split)
       split_df.write.mode("overwrite").parquet(file_path)
     
-    file_path = self.config["output_stats_path"].format(name=self.name)
+    file_path = self.data_info.output_stats_path.format(name=self.name)
     with open(file_path, "w") as f:
       f.write(json.dumps(stats))

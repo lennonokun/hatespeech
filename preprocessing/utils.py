@@ -67,10 +67,10 @@ def segment_bools(ls):
 
   return out
 
-def pudf_tokenize(config):
+def pudf_tokenize(model_name, max_length):
   sc = SparkContext.getOrCreate()
 
-  tokenizer = AutoTokenizer.from_pretrained(config["model"])
+  tokenizer = AutoTokenizer.from_pretrained(model_name)
   tokenizer = sc.broadcast(tokenizer)
 
   @F.pandas_udf(T.StructType([ # pyright: ignore[reportPrivateImportUsage, reportCallIssue]
@@ -83,7 +83,7 @@ def pudf_tokenize(config):
       tokenized = tokenizer.value(
         text.to_list(),
         truncation=True,
-        max_length=config["max_length"],
+        max_length=max_length,
         return_offsets_mapping=True,
       )
 
