@@ -29,13 +29,11 @@ After importing the datasets you wish to use, use the included scripts
 to preprocess them:
 
 HateXplain:
-- first, convert the json to parquet with ~uv run -m
-  scripts.fix_explain~
+- first, convert the json to parquet with ~uv run -m scripts.fix_explain~
 - then, preprocess with ~uv run -m scripts.preprocess preprocessor=explain~
   
 Measuring Hate Speech:
-- preprocess with ~uv run -m scripts.preprocessor
-  preprocessor=measuring~
+- preprocess with ~uv run -m scripts.preprocessor preprocessor=measuring~
 
 ** training and testing models
 
