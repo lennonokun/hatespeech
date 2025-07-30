@@ -2,18 +2,54 @@
 
 This project hopes to test and compare multi-task learning and modular
 learning methods on the problem of hatespeech
-classification. Currently the datasets of interest are the Hatexplain
-and Measuring Hatespeech datasets. I specifically hope to compare
+classification. Currently the datasets of interest are the "HateXplain"
+and "Measuring Hate Speech" datasets. I specifically hope to compare
 merging/fusing separately trained adapters with singly trained
 multi-task adapters.
 
-* results
+* how to use
+
+** importing the data
+
+The datasets themselves are not included in this repository. Below are
+instructions on how to import them manually (I will probably add
+scripts for this soon).
+
+HateXplain:
+- download [[https://github.com/hate-alert/HateXplain/blob/master/Data/dataset.json][dataset.json]] from their github repository and move it to
+  data/explain/dirty.json
+
+Measuring Hate Speech:
+- download [[https://huggingface.co/datasets/ucberkeley-dlab/measuring-hate-speech/blob/main/measuring-hate-speech.parquet][measuring-hate-speech.parquet]] from their hugging face
+  dataset and move it to data/measuring/input.parquet
+
+** preprocessing the data
+
+After importing the datasets you wish to use, use the included scripts
+to preprocess them:
+
+HateXplain:
+- first, convert the json to parquet with ~uv run -m
+  scripts.fix_explain~
+- then, preprocess with ~uv run -m scripts.preprocess preprocessor=explain~
+  
+Measuring Hate Speech:
+- preprocess with ~uv run -m scripts.preprocessor
+  preprocessor=measuring~
+
+** training and testing models
+
+Pretrained models are included in the adapters folder. Currently, they
+are not all in the proper format except for those in
+adapters/small/lora16. I will write a thorough explanation soon,
+but for now check out how to train and test the models by looking at
+the code and the examples in the experiments section.
+
+* experiments
 
 ** electra-small lora16 targets partitioned n=4
 
-TODO MAKE THESE EXPERIMENTS?
-
-TRAINING FROM SCRATCH
+*** training
 #+begin_src sh
 # train partitions
 uv run -m scripts.model tasks=[target] tasks.target.mask_pattern="1 4" \
@@ -32,7 +68,7 @@ uv run -m scripts.model tasks=[target] method=ah_merge16 optimization.warmup=15 
 uv run -m scripts.model tasks=[target] save_path=adapters/small/lora16/target_single
 #+end_src
 
-TESTING
+*** testing
 #+begin_src sh
 # test partitions
 uv run -m scripts.model tasks=[target] action=test tasks.target.mask_pattern="1 4" \
@@ -52,7 +88,7 @@ uv run -m scripts.model tasks=[target] action=test method=ah_load heads.load=Tru
 	load_path=adapters/small/lora16/target_single
 #+end_src
 
-RESULTS
+*** results
 - it seems as if merged model is comparable to multiple subtasks
   models and better than a singly trained model
 - make sure this isnt a result of too early stopping
